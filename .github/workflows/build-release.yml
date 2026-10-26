@@ -48,19 +48,19 @@ jobs:
 
       - name: Prepare Release Artifacts
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/AutoBrightnessGuard-1.2b.apk
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/AutoBrightnessGuard-1.3b.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AutoBrightnessGuard-1.2b-APK
-          path: app/build/outputs/apk/debug/AutoBrightnessGuard-1.2b.apk
+          name: AutoBrightnessGuard-1.3b-APK
+          path: app/build/outputs/apk/debug/AutoBrightnessGuard-1.3b.apk
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/AutoBrightnessGuard-1.2b.apk
+          files: app/build/outputs/apk/debug/AutoBrightnessGuard-1.3b.apk
           name: Auto Brightness Guard ${{ github.ref_name }}
           generate_release_notes: true
         env:

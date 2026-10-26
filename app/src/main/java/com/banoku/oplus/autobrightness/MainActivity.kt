@@ -5,10 +5,7 @@ import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -47,9 +44,11 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -69,6 +68,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -94,6 +94,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.banoku.oplus.autobrightness.ui.theme.AutoBrightnessGuardTheme
 import com.banoku.oplus.autobrightness.util.DeviceCompatibility
+import com.banoku.oplus.autobrightness.util.GuardStats
+import com.banoku.oplus.autobrightness.util.LocaleHelper
 import com.banoku.oplus.autobrightness.util.LogEntry
 import com.banoku.oplus.autobrightness.util.LogType
 import com.banoku.oplus.autobrightness.util.ReleaseInfo
@@ -119,13 +121,22 @@ fun MainAppScreen() {
     var selectedTab by remember { mutableIntStateOf(0) }
     var updateState by remember { mutableStateOf<UpdateResult?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
+    var stats by remember { mutableStateOf(GuardStats(0, "", "")) }
     val scope = rememberCoroutineScope()
 
-    // Automatic silent background check on launch
+    // Silent background checks on launch
     LaunchedEffect(Unit) {
-        isCheckingUpdate = true
-        updateState = UpdateChecker.checkUpdate()
-        isCheckingUpdate = false
+        scope.launch {
+            val logs = RootHelper.readModuleLogs()
+            if (logs.isNotEmpty()) {
+                stats = RootHelper.computeStats(logs)
+            }
+        }
+        scope.launch {
+            isCheckingUpdate = true
+            updateState = UpdateChecker.checkUpdate()
+            isCheckingUpdate = false
+        }
     }
 
     Scaffold(
@@ -177,17 +188,13 @@ fun MainAppScreen() {
             0 -> OverviewTabContent(
                 modifier = Modifier.padding(innerPadding),
                 updateState = updateState,
-                isCheckingUpdate = isCheckingUpdate,
-                onCheckUpdate = {
-                    scope.launch {
-                        isCheckingUpdate = true
-                        updateState = UpdateChecker.checkUpdate()
-                        isCheckingUpdate = false
-                    }
-                }
+                stats = stats
             )
             1 -> SettingsTabContent(modifier = Modifier.padding(innerPadding))
-            2 -> LogsTabContent(modifier = Modifier.padding(innerPadding))
+            2 -> LogsTabContent(
+                modifier = Modifier.padding(innerPadding),
+                onStatsUpdated = { newStats -> stats = newStats }
+            )
             3 -> ToolsTabContent(
                 modifier = Modifier.padding(innerPadding),
                 updateState = updateState,
@@ -213,8 +220,7 @@ fun MainAppScreen() {
 fun OverviewTabContent(
     modifier: Modifier = Modifier,
     updateState: UpdateResult?,
-    isCheckingUpdate: Boolean,
-    onCheckUpdate: () -> Unit
+    stats: GuardStats
 ) {
     val context = LocalContext.current
     var isIconHidden by remember { mutableStateOf(false) }
@@ -230,6 +236,83 @@ fun OverviewTabContent(
     ) {
         item {
             HeaderHero()
+        }
+
+        // Live Protection Statistics Hero Card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().testTag("stats_card"),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F1E36)),
+                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF38BDF8).copy(alpha = 0.5f)))
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = null,
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = stringResource(R.string.stats_card_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFF0F9FF)
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF10B981).copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "SYSTEM_SERVER",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF34D399)
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = Color(0xFF1E293B))
+
+                    if (stats.totalBlocked > 0) {
+                        Text(
+                            text = String.format(stringResource(R.string.stats_blocked_count), stats.totalBlocked),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF34D399)
+                        )
+                        if (stats.lastBlockedTime.isNotBlank()) {
+                            Text(
+                                text = String.format(stringResource(R.string.stats_last_blocked), stats.lastBlockedTime),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = stringResource(R.string.stats_no_events),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFFBAE6FD)
+                        )
+                    }
+                }
+            }
         }
 
         // Update banner if available
@@ -279,7 +362,7 @@ fun OverviewTabContent(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
                             Text(
-                                text = "Системный фреймворк (System)",
+                                text = stringResource(R.string.status_framework),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -290,7 +373,7 @@ fun OverviewTabContent(
                             color = if (isRoot) Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFFFF9800).copy(alpha = 0.2f)
                         ) {
                             Text(
-                                text = if (isRoot) "Root: Доступен" else "Root: Не найден",
+                                text = if (isRoot) stringResource(R.string.root_available) else stringResource(R.string.root_unavailable),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
@@ -301,13 +384,13 @@ fun OverviewTabContent(
 
                     Column {
                         Text(
-                            text = "Активные хуки (v1.2b)",
+                            text = "Двойной системный перехват (v1.3b)",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "1. OplusAutomaticBrightnessController.resetAutoBrightness()\n2. OplusBrightnessAmbientAdapter.resetAmbientAdapter(String)",
+                            text = "1. OplusAutomaticBrightnessController.resetAutoBrightness()\n2. OplusBrightnessAmbientAdapter.resetAmbientAdapter(AutoReset)",
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Medium,
@@ -339,7 +422,7 @@ fun OverviewTabContent(
                             tint = if (compInfo.isCompatible) Color(0xFF10B981) else Color(0xFFFF9800)
                         )
                         Text(
-                            text = "Аппаратная платформа",
+                            text = stringResource(R.string.device_compatibility),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -480,7 +563,7 @@ private fun HeaderHero() {
                 color = Color(0xFFFFC107).copy(alpha = 0.2f)
             ) {
                 Text(
-                    text = "v1.2b",
+                    text = "v1.3b",
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
@@ -493,7 +576,7 @@ private fun HeaderHero() {
                 color = MaterialTheme.colorScheme.primaryContainer
             ) {
                 Text(
-                    text = "LibXposed API 102",
+                    text = "SystemProperties IPC",
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium,
@@ -505,18 +588,21 @@ private fun HeaderHero() {
 }
 
 // ==============================================================================================
-// TAB 2: SETTINGS (RemotePreferences)
+// TAB 2: SETTINGS (SystemProperties & Language)
 // ==============================================================================================
 
 @Composable
 fun SettingsTabContent(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
 
     var blockReset by remember { mutableStateOf(prefs.getBoolean("pref_block_reset", true)) }
     var blockAmbient by remember { mutableStateOf(prefs.getBoolean("pref_block_ambient", true)) }
     var strictAlarm by remember { mutableStateOf(prefs.getBoolean("pref_strict_alarm", false)) }
     var verboseLog by remember { mutableStateOf(prefs.getBoolean("pref_verbose_log", false)) }
+
+    var currentLang by remember { mutableStateOf(LocaleHelper.getSelectedLanguage(context)) }
 
     LazyColumn(
         modifier = modifier
@@ -527,16 +613,71 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
     ) {
         item {
             Text(
-                text = "Настройки модуля (1.2b)",
+                text = stringResource(R.string.tab_settings),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Синхронизируются с хуком через RemotePreferences в реальном времени",
+                text = stringResource(R.string.system_properties_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+
+        // Language Selection Card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Language,
+                            contentDescription = null,
+                            tint = Color(0xFFFFC107)
+                        )
+                        Text(
+                            text = stringResource(R.string.pref_language_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Text(
+                        text = stringResource(R.string.pref_language_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    LanguageRadioOption("system", stringResource(R.string.lang_system), currentLang) {
+                        currentLang = it
+                        LocaleHelper.setAppLocale(context, it)
+                    }
+                    LanguageRadioOption("ru", stringResource(R.string.lang_ru), currentLang) {
+                        currentLang = it
+                        LocaleHelper.setAppLocale(context, it)
+                    }
+                    LanguageRadioOption("en", stringResource(R.string.lang_en), currentLang) {
+                        currentLang = it
+                        LocaleHelper.setAppLocale(context, it)
+                    }
+                    LanguageRadioOption("uk", stringResource(R.string.lang_uk), currentLang) {
+                        currentLang = it
+                        LocaleHelper.setAppLocale(context, it)
+                    }
+                }
+            }
         }
 
         item {
@@ -544,10 +685,13 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                 title = stringResource(R.string.pref_block_reset_title),
                 desc = stringResource(R.string.pref_block_reset_desc),
                 checked = blockReset,
-                onCheckedChange = {
-                    blockReset = it
-                    prefs.edit().putBoolean("pref_block_reset", it).apply()
-                    Toast.makeText(context, "Настройка сохранена", Toast.LENGTH_SHORT).show()
+                onCheckedChange = { newState ->
+                    blockReset = newState
+                    prefs.edit().putBoolean("pref_block_reset", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_BLOCK_RESET, newState)
+                    }
+                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -557,10 +701,13 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                 title = stringResource(R.string.pref_block_ambient_title),
                 desc = stringResource(R.string.pref_block_ambient_desc),
                 checked = blockAmbient,
-                onCheckedChange = {
-                    blockAmbient = it
-                    prefs.edit().putBoolean("pref_block_ambient", it).apply()
-                    Toast.makeText(context, "Настройка сохранена", Toast.LENGTH_SHORT).show()
+                onCheckedChange = { newState ->
+                    blockAmbient = newState
+                    prefs.edit().putBoolean("pref_block_ambient", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_BLOCK_AMBIENT, newState)
+                    }
+                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -570,10 +717,13 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                 title = stringResource(R.string.pref_strict_alarm_title),
                 desc = stringResource(R.string.pref_strict_alarm_desc),
                 checked = strictAlarm,
-                onCheckedChange = {
-                    strictAlarm = it
-                    prefs.edit().putBoolean("pref_strict_alarm", it).apply()
-                    Toast.makeText(context, "Настройка сохранена", Toast.LENGTH_SHORT).show()
+                onCheckedChange = { newState ->
+                    strictAlarm = newState
+                    prefs.edit().putBoolean("pref_strict_alarm", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_STRICT_ALARM, newState)
+                    }
+                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -583,10 +733,13 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                 title = stringResource(R.string.pref_verbose_log_title),
                 desc = stringResource(R.string.pref_verbose_log_desc),
                 checked = verboseLog,
-                onCheckedChange = {
-                    verboseLog = it
-                    prefs.edit().putBoolean("pref_verbose_log", it).apply()
-                    Toast.makeText(context, "Настройка сохранена", Toast.LENGTH_SHORT).show()
+                onCheckedChange = { newState ->
+                    verboseLog = newState
+                    prefs.edit().putBoolean("pref_verbose_log", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_VERBOSE_LOG, newState)
+                    }
+                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -609,13 +762,41 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = "Все изменения применяются хуком сразу благодаря LibXposed RemotePreferences.",
+                        text = "Все переключатели меняют свойства persist.autobrightness.* через root. Хук внутри system_server считывает их моментально.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+fun LanguageRadioOption(
+    tag: String,
+    label: String,
+    selectedTag: String,
+    onSelect: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { onSelect(tag) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selectedTag == tag,
+            onClick = { onSelect(tag) }
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (selectedTag == tag) FontWeight.Bold else FontWeight.Normal
+        )
     }
 }
 
@@ -667,7 +848,10 @@ fun SettingSwitchCard(
 // ==============================================================================================
 
 @Composable
-fun LogsTabContent(modifier: Modifier = Modifier) {
+fun LogsTabContent(
+    modifier: Modifier = Modifier,
+    onStatsUpdated: (GuardStats) -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var logs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
@@ -676,7 +860,15 @@ fun LogsTabContent(modifier: Modifier = Modifier) {
     var statusMessage by remember { mutableStateOf("Нажмите кнопку для чтения логов через root su") }
 
     LaunchedEffect(Unit) {
-        logs = RootHelper.getSampleSimulationLogs()
+        val fetched = RootHelper.readModuleLogs()
+        if (fetched.isNotEmpty()) {
+            logs = fetched
+            val stats = RootHelper.computeStats(fetched)
+            onStatsUpdated(stats)
+            statusMessage = "Загружено ${fetched.size} записей (LSPosed / logcat)"
+        } else {
+            statusMessage = "Событий сброса пока не зафиксировано (или root не предоставлен)"
+        }
     }
 
     Column(
@@ -732,15 +924,17 @@ fun LogsTabContent(modifier: Modifier = Modifier) {
             ElevatedButton(
                 onClick = {
                     isLoading = true
-                    statusMessage = "Запрос logcat через su..."
+                    statusMessage = "Чтение логов через root su..."
                     scope.launch {
                         val fetched = RootHelper.readModuleLogs()
                         if (fetched.isNotEmpty()) {
                             logs = fetched
-                            statusMessage = "Загружено ${fetched.size} записей из logcat"
+                            val stats = RootHelper.computeStats(fetched)
+                            onStatsUpdated(stats)
+                            statusMessage = "Загружено ${fetched.size} записей (LSPosed / logcat)"
                         } else {
-                            statusMessage = "Записей не найдено (или root не предоставлен). Загружена демонстрация."
-                            logs = RootHelper.getSampleSimulationLogs()
+                            logs = emptyList()
+                            statusMessage = "В системном журнале пока нет записей перехвата. Либо телефон ещё не спал >10 минут, либо не предоставлен root."
                         }
                         isLoading = false
                     }
@@ -757,7 +951,7 @@ fun LogsTabContent(modifier: Modifier = Modifier) {
                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Прочитать su")
+                Text(stringResource(R.string.read_live_logs))
             }
 
             OutlinedButton(
@@ -808,7 +1002,7 @@ fun LogsTabContent(modifier: Modifier = Modifier) {
             if (filteredLogs.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        text = "Логи отсутствуют",
+                        text = "Логи отсутствуют (ожидание сна экрана 10+ мин)",
                         color = Color(0xFF64748B),
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -904,7 +1098,7 @@ fun ToolsTabContent(
     ) {
         item {
             Text(
-                text = "Инструменты и Обновления",
+                text = "Инструменты и Диагностика",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -964,7 +1158,7 @@ fun ToolsTabContent(
                         }
                         null -> {
                             Text(
-                                text = "Текущая версия: v1.2b",
+                                text = "Текущая версия: v1.3b",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1040,32 +1234,40 @@ fun ToolsTabContent(
 
         item {
             CommandCard(
-                title = "1. Просмотр логов модуля",
-                desc = "Выводит все события перехвата и статус загрузки хука.",
-                command = "su -c \"logcat -d -s AutoBrightnessGuard\""
+                title = "1. Самый свежий лог LSPosed",
+                desc = "Читает последний файл журнала LSPosed с точным списком заблокированных вызовов.",
+                command = "su -c \"cat \\$(ls -t /data/adb/lspd/log/modules_*.log 2>/dev/null | head -n 1) | grep -i AutoBrightnessGuard\""
             )
         }
 
         item {
             CommandCard(
-                title = "2. Полный grep по системному логу",
-                desc = "Ищет любые упоминания модуля во всём кольцевом буфере logcat.",
-                command = "su -c \"logcat -d | grep -i AutoBrightnessGuard\""
+                title = "2. Лог через logcat (все буферы)",
+                desc = "Читает все системные буферы logcat, включая system_server.",
+                command = "su -c \"logcat -d -b all -s AutoBrightnessGuard:V\""
             )
         }
 
         item {
             CommandCard(
-                title = "3. Состояние контроллера яркости",
-                desc = "Дамп параметров службы OplusAutomaticBrightnessController.",
-                command = "su -c \"dumpsys display | grep -i OplusAutomaticBrightnessController\""
+                title = "3. Состояние контроллера яркости (полный дамп)",
+                desc = "Дамп параметров службы OplusAutomaticBrightnessController (с выводом 25 строк состояния).",
+                command = "su -c \"dumpsys display | grep -A 25 -i OplusAutomaticBrightnessController\""
             )
         }
 
         item {
             CommandCard(
-                title = "4. Быстрый перезапуск фреймворка (Soft Reboot)",
-                desc = "Перезапускает system_server без полной перезагрузки устройства для мгновенного применения хуков.",
+                title = "4. Проверка системных настроек модуля",
+                desc = "Выводит текущие значения свойств persist.autobrightness.* в реальном времени.",
+                command = "su -c \"getprop | grep autobrightness\""
+            )
+        }
+
+        item {
+            CommandCard(
+                title = "5. Мягкий перезапуск фреймворка (Soft Reboot)",
+                desc = "Перезапускает system_server за 5 секунд без полной перезагрузки ядра телефона.",
                 command = "su -c \"killall system_server\""
             )
         }
@@ -1104,7 +1306,7 @@ fun ToolsTabContent(
                             val comp = DeviceCompatibility.getCompatibilitySummary()
                             val report = buildString {
                                 appendLine("=== Auto Brightness Guard Diagnostic Report ===")
-                                appendLine("Module Version: 1.2b (LibXposed API 102)")
+                                appendLine("Module Version: 1.3b (LibXposed API 102)")
                                 appendLine("Device: ${comp.deviceModel}")
                                 appendLine("OS: ${comp.androidVersion}")
                                 appendLine("Fingerprint: ${comp.fingerprint}")
@@ -1193,7 +1395,7 @@ fun UpdateBannerCard(info: ReleaseInfo) {
                     ) {
                         Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Скачать APK")
+                        Text(stringResource(R.string.download_apk))
                     }
                 }
 
@@ -1205,7 +1407,7 @@ fun UpdateBannerCard(info: ReleaseInfo) {
                 ) {
                     Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("GitHub")
+                    Text(stringResource(R.string.view_release))
                 }
             }
         }
@@ -1306,8 +1508,8 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         item {
             FaqItem(
                 id = 0,
-                question = "Что нового в версии 1.2b?",
-                answer = "1. Дополнительный хук OplusBrightnessAmbientAdapter.resetAmbientAdapter(String): блокирует сброс параметров сплайна и интерполяции люксов.\n2. RemotePreferences (Настройки в реальном времени): возможность на лету через вкладку «Настройки» включать/отключать блокировки, строгий режим Alarm и подробные логи.\n3. Встроенная проверка обновлений через GitHub Releases с загрузкой APK в 1 клик.\n4. Полная поддержка LibXposed API 102.",
+                question = "Что нового в версии 1.3b?",
+                answer = "1. SystemProperties IPC: переключатели в приложении теперь меняют свойства persist.autobrightness.* через root. Хук внутри system_server считывает их моментально на лету без перезагрузки смартфона!\n2. Точный парсинг логов: чтение самого свежего журнала LSPosed с отображением всех заблокированных сбросов.\n3. Виджет статистики на главном экране (количество заблокированных сбросов и время последней защиты).\n4. Выбор языка приложения прямо в настройках (Русский, English, Українська).\n5. Адаптация под причину сброса AutoReset в OxygenOS 16.",
                 isExpanded = expandedFaq == 0,
                 onToggle = { expandedFaq = if (expandedFaq == 0) null else 0 }
             )
@@ -1317,7 +1519,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             FaqItem(
                 id = 1,
                 question = "В чём заключается баг автояркости OxygenOS?",
-                answer = "В прошивках OnePlus (OxygenOS 12, 13, 14, 15) контроллер OplusAutomaticBrightnessController заводит таймер на 10 минут при выключении экрана. Когда телефон «спит» дольше этого времени, таймер вызывает метод resetAutoBrightness() и сброс адаптера. Это стирает обученную кривую яркости под предпочтения пользователя и откатывает её к заводскому профилю.",
+                answer = "В прошивках OnePlus (OxygenOS 12, 13, 14, 15, 16) контроллер OplusAutomaticBrightnessController заводит таймер на 10 минут при выключении экрана. Когда телефон «спит» дольше этого времени, таймер вызывает метод resetAutoBrightness() и сброс адаптера (AutoReset). Это стирает обученную кривую яркости под предпочтения пользователя и откатывает её к заводскому профилю.",
                 isExpanded = expandedFaq == 1,
                 onToggle = { expandedFaq = if (expandedFaq == 1) null else 1 }
             )
@@ -1326,8 +1528,8 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         item {
             FaqItem(
                 id = 2,
-                question = "Как проверить, что защита действительно работает?",
-                answer = "1. Заблокируйте телефон и оставьте его на 10-15 минут.\n2. Включите экран.\n3. Откройте вкладку «Логи» в этом приложении или выполните в Termux:\n   su -c \"logcat -d -s AutoBrightnessGuard\"\n4. Вы увидите строку вида: BLOCKED resetAutoBrightness #1 (rule=lambda) и BLOCKED resetAmbientAdapter. Это значит, что сброс был успешно отклонён!",
+                question = "Требуется ли перезагрузка смартфона при обновлении APK?",
+                answer = "Если обновляется только интерфейс приложения (дизайн, статистика, язык) — перезагрузка НЕ нужна, приложение работает сразу.\nЕсли обновляется сам код хука в ядре Android (AutoBrightnessModule) — для того, чтобы system_server подтянул новый DEX, нужен Soft Reboot (команда killall system_server за 5 секунд) или обычная перезагрузка.\nИзменение же ползунков настроек в приложении перезагрузки НЕ ТРЕБУЕТ вообще никогда (работает через SystemProperties).",
                 isExpanded = expandedFaq == 2,
                 onToggle = { expandedFaq = if (expandedFaq == 2) null else 2 }
             )
@@ -1351,6 +1553,71 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "История версий (Changelog)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Версия 1.3b (Текущая)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFFB300)
+                        )
+                        Text(
+                            text = "• SystemProperties IPC: переключатели в приложении теперь меняют свойства persist.autobrightness.* через root. Хук считывает их моментально на лету БЕЗ перезагрузки смартфона.\n• Точный парсинг логов: поиск самого свежего журнала LSPosed с отображением всех заблокированных сбросов.\n• Виджет статистики на главном экране (количество заблокированных сбросов и время последней защиты).\n• Выбор языка приложения прямо в настройках (Русский, English, Українська).\n• Адаптация под причину сброса AutoReset в OxygenOS 16.\n• Уровень логов переведён на WARN для обхода подавления в службе logd.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Версия 1.2b",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                        Text(
+                            text = "• Дополнительный хук OplusBrightnessAmbientAdapter.resetAmbientAdapter(String reason).\n• Встроенная проверка и скачивание обновлений через GitHub Releases.\n• Полнофункциональное приложение-компаньон с Material 3 UI.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Версия 1.1",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF94A3B8)
+                        )
+                        Text(
+                            text = "• Двухуровневое правило перехвата (lambda + alarm).\n• Принудительная деоптимизация компилятора ART.\n• Режим безопасности Fail-Open для защиты от бутлупов.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
@@ -1359,7 +1626,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.2b\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
+                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.3b\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

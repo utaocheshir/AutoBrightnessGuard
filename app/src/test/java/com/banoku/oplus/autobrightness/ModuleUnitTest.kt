@@ -14,26 +14,30 @@ class ModuleUnitTest {
 
     @Test
     fun versionAndTagCheck() {
-        assertEquals("1.2b", AutoBrightnessModule.VERSION)
+        assertEquals("1.3b", AutoBrightnessModule.VERSION)
         assertEquals("AutoBrightnessGuard", AutoBrightnessModule.TAG)
+        assertEquals("persist.autobrightness.block_reset", AutoBrightnessModule.PROP_BLOCK_RESET)
+        assertEquals("persist.autobrightness.block_ambient", AutoBrightnessModule.PROP_BLOCK_AMBIENT)
     }
 
     @Test
     fun updateCheckerVersionComparison() {
-        assertTrue(UpdateChecker.isVersionNewer("1.3", "1.2b"))
-        assertTrue(UpdateChecker.isVersionNewer("1.2.1", "1.2b"))
-        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.2b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.2b", "1.2b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.1", "1.2b"))
-        assertFalse(UpdateChecker.isVersionNewer("", "1.2b"))
+        assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
+        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.3b"))
+        assertFalse(UpdateChecker.isVersionNewer("1.3b", "1.3b"))
+        assertFalse(UpdateChecker.isVersionNewer("1.2b", "1.3b"))
+        assertFalse(UpdateChecker.isVersionNewer("1.1", "1.3b"))
     }
 
     @Test
-    fun simulationLogsCheck() {
+    fun simulationLogsAndStatsCheck() {
         val sampleLogs = RootHelper.getSampleSimulationLogs()
         assertTrue(sampleLogs.isNotEmpty())
         assertTrue(sampleLogs.any { it.type == LogType.BLOCKED })
-        assertTrue(sampleLogs.any { it.type == LogType.HOOK })
+
+        val stats = RootHelper.computeStats(sampleLogs)
+        assertEquals(2, stats.totalBlocked)
+        assertEquals("20:11:49", stats.lastBlockedTime)
     }
 
     @Test

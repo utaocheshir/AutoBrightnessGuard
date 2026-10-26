@@ -1,6 +1,5 @@
 package com.banoku.oplus.autobrightness;
 
-import android.content.SharedPreferences;
 import android.os.Build;
 import android.util.Log;
 
@@ -12,16 +11,21 @@ import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Auto Brightness Guard 1.2b.
+ * Auto Brightness Guard 1.3b.
  *
  * Blocks resetAutoBrightness() in OplusAutomaticBrightnessController and
  * resetAmbientAdapter() in OplusBrightnessAmbientAdapter when called on screen-off timer.
- * Configurable via RemotePreferences.
+ * Reads real-time toggles via SystemProperties (persist.autobrightness.*) without reboot.
  */
 public class AutoBrightnessModule extends XposedModule {
 
-    static final String TAG = "AutoBrightnessGuard";
-    public static final String VERSION = "1.2b";
+    public static final String TAG = "AutoBrightnessGuard";
+    public static final String VERSION = "1.3b";
+
+    public static final String PROP_BLOCK_RESET = "persist.autobrightness.block_reset";
+    public static final String PROP_BLOCK_AMBIENT = "persist.autobrightness.block_ambient";
+    public static final String PROP_STRICT_ALARM = "persist.autobrightness.strict_alarm";
+    public static final String PROP_VERBOSE_LOG = "persist.autobrightness.verbose_log";
 
     private static final String TARGET_CLASS =
             "com.android.server.display.OplusAutomaticBrightnessController";
@@ -44,18 +48,10 @@ public class AutoBrightnessModule extends XposedModule {
     private final AtomicInteger blockedAmbient = new AtomicInteger();
     private final AtomicInteger passed = new AtomicInteger();
 
-    private volatile SharedPreferences prefs;
-
     @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
         note(Log.INFO, "v" + VERSION + " starting, sdk=" + Build.VERSION.SDK_INT
                 + ", build=" + Build.FINGERPRINT);
-
-        try {
-            prefs = getRemotePreferences("settings");
-        } catch (Throwable t) {
-            note(Log.WARN, "RemotePreferences not accessible, using defaults: " + t.getMessage());
-        }
 
         ClassLoader cl = param.getClassLoader();
 
@@ -90,11 +86,11 @@ public class AutoBrightnessModule extends XposedModule {
         }
     }
 
-    private boolean isPrefEnabled(String key, boolean defaultValue) {
+    private static boolean isPropertyEnabled(String propKey, boolean defaultValue) {
         try {
-            if (prefs != null) {
-                return prefs.getBoolean(key, defaultValue);
-            }
+            Class<?> sp = Class.forName("android.os.SystemProperties");
+            Method getBoolean = sp.getMethod("getBoolean", String.class, boolean.class);
+            return (Boolean) getBoolean.invoke(null, propKey, defaultValue);
         } catch (Throwable ignored) {
         }
         return defaultValue;
@@ -103,13 +99,13 @@ public class AutoBrightnessModule extends XposedModule {
     private final class ResetGuard implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!isPrefEnabled("pref_block_reset", true)) {
+            if (!isPropertyEnabled(PROP_BLOCK_RESET, true)) {
                 return chain.proceed();
             }
 
             String rule = null;
             StackTraceElement[] stack = null;
-            boolean strictAlarm = isPrefEnabled("pref_strict_alarm", false);
+            boolean strictAlarm = isPropertyEnabled(PROP_STRICT_ALARM, false);
             try {
                 stack = Thread.currentThread().getStackTrace();
                 rule = matchAlarmContext(stack, strictAlarm);
@@ -119,12 +115,12 @@ public class AutoBrightnessModule extends XposedModule {
 
             if (rule != null) {
                 int n = blockedReset.incrementAndGet();
-                note(Log.INFO, "BLOCKED resetAutoBrightness #" + n + " (rule=" + rule + ")");
+                note(Log.WARN, "BLOCKED resetAutoBrightness #" + n + " (rule=" + rule + ")");
                 return null;
             }
 
             int n = passed.incrementAndGet();
-            boolean verbose = isPrefEnabled("pref_verbose_log", false);
+            boolean verbose = isPropertyEnabled(PROP_VERBOSE_LOG, false);
             if (verbose || n <= MAX_PASS_LOGS) {
                 note(Log.INFO, "passed resetAutoBrightness #" + n + " from " + callers(stack));
             }
@@ -135,7 +131,7 @@ public class AutoBrightnessModule extends XposedModule {
     private final class AmbientAdapterGuard implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!isPrefEnabled("pref_block_ambient", true)) {
+            if (!isPropertyEnabled(PROP_BLOCK_AMBIENT, true)) {
                 return chain.proceed();
             }
 
@@ -148,10 +144,13 @@ public class AutoBrightnessModule extends XposedModule {
             } catch (Throwable ignored) {
             }
 
-            boolean isResetReason = "resetAutoBrightness".equals(reason);
+            boolean isResetReason = "resetAutoBrightness".equalsIgnoreCase(reason)
+                    || "AutoReset".equalsIgnoreCase(reason)
+                    || (reason != null && reason.toLowerCase().contains("reset"));
+
             String rule = null;
             StackTraceElement[] stack = null;
-            boolean strictAlarm = isPrefEnabled("pref_strict_alarm", false);
+            boolean strictAlarm = isPropertyEnabled(PROP_STRICT_ALARM, false);
 
             try {
                 stack = Thread.currentThread().getStackTrace();
@@ -161,11 +160,11 @@ public class AutoBrightnessModule extends XposedModule {
 
             if (isResetReason || rule != null) {
                 int n = blockedAmbient.incrementAndGet();
-                note(Log.INFO, "BLOCKED resetAmbientAdapter #" + n + " (reason=" + reason + ", rule=" + rule + ")");
+                note(Log.WARN, "BLOCKED resetAmbientAdapter #" + n + " (reason=" + reason + ", rule=" + rule + ")");
                 return null;
             }
 
-            boolean verbose = isPrefEnabled("pref_verbose_log", false);
+            boolean verbose = isPropertyEnabled(PROP_VERBOSE_LOG, false);
             if (verbose) {
                 note(Log.INFO, "passed resetAmbientAdapter (reason=" + reason + ")");
             }
@@ -218,7 +217,10 @@ public class AutoBrightnessModule extends XposedModule {
 
     private void note(int priority, String msg) {
         try { log(priority, TAG, msg); } catch (Throwable ignored) { }
-        try { Log.println(priority, TAG, msg); } catch (Throwable ignored) { }
+        try {
+            // Using Log.WARN ensures OxygenOS/ColorOS logd never suppresses messages from system_server
+            Log.println(Log.WARN, TAG, msg);
+        } catch (Throwable ignored) { }
     }
 
     private void noteError(String msg, Throwable t) {
