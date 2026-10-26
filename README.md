@@ -1,7 +1,7 @@
 # Auto Brightness Guard
 
 <p align="center">
-  <img src="app/src/main/res/drawable/ic_sun.xml" width="96" height="96" alt="Auto Brightness Guard Logo" />
+  <img src="assets/logo.png" width="96" height="96" alt="Auto Brightness Guard Logo" />
 </p>
 
 <p align="center">

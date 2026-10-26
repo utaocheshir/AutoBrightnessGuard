@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <defs>
+    <radialGradient id="sunGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFE082" />
+      <stop offset="60%" stop-color="#FFC107" />
+      <stop offset="100%" stop-color="#FFA000" />
+    </radialGradient>
+  </defs>
+  <!-- Background Circle -->
+  <circle cx="54" cy="54" r="50" fill="#1B2A49" stroke="#FFC107" stroke-width="2" stroke-opacity="0.3"/>
+  <!-- Sun Core -->
+  <circle cx="54" cy="54" r="14" fill="url(#sunGlow)"/>
+  <!-- Sun Rays -->
+  <g stroke="#FFC107" stroke-width="4" stroke-linecap="round">
+    <line x1="54" y1="26" x2="54" y2="33"/>
+    <line x1="54" y1="75" x2="54" y2="82"/>
+    <line x1="26" y1="54" x2="33" y2="54"/>
+    <line x1="75" y1="54" x2="82" y2="54"/>
+    <line x1="34" y1="34" x2="39" y2="39"/>
+    <line x1="69" y1="69" x2="74" y2="74"/>
+    <line x1="34" y1="74" x2="39" y2="69"/>
+    <line x1="69" y1="39" x2="74" y2="34"/>
+  </g>
+</svg>
