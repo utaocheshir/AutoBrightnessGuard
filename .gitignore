@@ -19,4 +19,5 @@ debug.keystore
 research_extracted/
 public/assets/
 .build-outputs/
+.aistudio/
 *.zip
