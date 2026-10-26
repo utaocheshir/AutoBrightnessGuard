@@ -22,11 +22,20 @@ class ModuleUnitTest {
 
     @Test
     fun updateCheckerVersionComparison() {
-        assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.3b"))
+        // Must NOT loop on the same version regardless of case or 'v'/'V' prefix
+        assertFalse(UpdateChecker.isVersionNewer("V1.3b", "1.3b"))
+        assertFalse(UpdateChecker.isVersionNewer("v1.3b", "1.3b"))
         assertFalse(UpdateChecker.isVersionNewer("1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.2b", "1.3b"))
+        assertFalse(UpdateChecker.isVersionNewer("v1.2b", "1.3b"))
+        assertFalse(UpdateChecker.isVersionNewer("V1.2b", "1.3b"))
         assertFalse(UpdateChecker.isVersionNewer("1.1", "1.3b"))
+
+        // Truly newer versions
+        assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
+        assertTrue(UpdateChecker.isVersionNewer("v1.4b", "1.3b"))
+        assertTrue(UpdateChecker.isVersionNewer("V1.4", "1.3b"))
+        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.3b"))
+        assertTrue(UpdateChecker.isVersionNewer("1.3", "1.3b")) // stable 1.3 is newer than beta 1.3b
     }
 
     @Test

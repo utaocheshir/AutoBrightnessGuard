@@ -8,6 +8,7 @@ import android.os.Environment
 import com.banoku.oplus.autobrightness.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -16,9 +17,8 @@ import java.net.URL
 
 object UpdateChecker {
 
-    // Default GitHub repo: utaocheshir/AutoBrightnessGuard
     private const val GITHUB_REPO = "utaocheshir/AutoBrightnessGuard"
-    private const val RELEASES_API_URL = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+    private const val RELEASES_API_URL = "https://api.github.com/repos/$GITHUB_REPO/releases"
     const val GITHUB_REPO_URL = "https://github.com/$GITHUB_REPO"
 
     suspend fun checkUpdate(): UpdateResult = withContext(Dispatchers.IO) {
@@ -35,48 +35,58 @@ object UpdateChecker {
             val responseCode = connection.responseCode
             if (responseCode == 200) {
                 val response = BufferedReader(InputStreamReader(connection.inputStream)).use { it.readText() }
-                val json = JSONObject(response)
-
-                val tagName = json.optString("tag_name", "").removePrefix("v")
-                val releaseName = json.optString("name", "Новая версия")
-                val releaseNotes = json.optString("body", "Нет описания изменений.")
-                val htmlUrl = json.optString("html_url", GITHUB_REPO_URL)
-
-                var apkDownloadUrl: String? = null
-                var apkSize: Long = 0
-
-                val assets = json.optJSONArray("assets")
-                if (assets != null) {
-                    for (i in 0 until assets.length()) {
-                        val asset = assets.getJSONObject(i)
-                        val assetName = asset.optString("name", "")
-                        if (assetName.endsWith(".apk", ignoreCase = true)) {
-                            apkDownloadUrl = asset.optString("browser_download_url")
-                            apkSize = asset.optLong("size", 0)
-                            break
-                        }
-                    }
-                }
+                val releases = JSONArray(response)
 
                 val currentVersion = BuildConfig.VERSION_NAME
-                val isNewer = isVersionNewer(tagName, currentVersion)
+                var newestRelease: ReleaseInfo? = null
 
-                if (isNewer) {
-                    UpdateResult.UpdateAvailable(
-                        ReleaseInfo(
-                            version = tagName,
+                for (i in 0 until releases.length()) {
+                    val json = releases.getJSONObject(i)
+                    if (json.optBoolean("draft", false)) continue
+
+                    val rawTag = json.optString("tag_name", "").trim()
+                    val releaseName = json.optString("name", "Новая версия")
+                    val releaseNotes = json.optString("body", "Нет описания изменений.")
+                    val htmlUrl = json.optString("html_url", GITHUB_REPO_URL)
+
+                    var apkDownloadUrl: String? = null
+                    var apkSize: Long = 0
+
+                    val assets = json.optJSONArray("assets")
+                    if (assets != null) {
+                        for (j in 0 until assets.length()) {
+                            val asset = assets.getJSONObject(j)
+                            val assetName = asset.optString("name", "")
+                            if (assetName.endsWith(".apk", ignoreCase = true)) {
+                                apkDownloadUrl = asset.optString("browser_download_url")
+                                apkSize = asset.optLong("size", 0)
+                                break
+                            }
+                        }
+                    }
+
+                    if (isVersionNewer(rawTag, currentVersion)) {
+                        val candidate = ReleaseInfo(
+                            version = rawTag.removePrefix("v").removePrefix("V"),
                             title = releaseName,
                             changelog = releaseNotes,
                             htmlUrl = htmlUrl,
                             apkUrl = apkDownloadUrl,
                             apkSize = apkSize
                         )
-                    )
+                        if (newestRelease == null || isVersionNewer(candidate.version, newestRelease.version)) {
+                            newestRelease = candidate
+                        }
+                    }
+                }
+
+                if (newestRelease != null) {
+                    UpdateResult.UpdateAvailable(newestRelease)
                 } else {
                     UpdateResult.UpToDate(currentVersion)
                 }
             } else if (responseCode == 404) {
-                UpdateResult.UpToDate("${BuildConfig.VERSION_NAME} (релизы на GitHub ещё не опубликованы)")
+                UpdateResult.UpToDate("${BuildConfig.VERSION_NAME} (релизы на GitHub ещё не найдены)")
             } else {
                 UpdateResult.Error("HTTP $responseCode: " + connection.responseMessage)
             }
@@ -87,28 +97,39 @@ object UpdateChecker {
         }
     }
 
+    /**
+     * Accurately compares versions, handling:
+     * - Case insensitivity ('V1.3b' vs '1.3b' -> false)
+     * - Numerical components comparison via regex
+     * - Suffix handling (e.g. '1.3' stable is newer than '1.3b' beta)
+     */
     fun isVersionNewer(remote: String, current: String): Boolean {
         if (remote.isBlank() || current.isBlank()) return false
         if (remote.equals(current, ignoreCase = true)) return false
 
-        val cleanRemote = remote.trim().removePrefix("v")
-        val cleanCurrent = current.trim().removePrefix("v")
+        // Extract all numeric components
+        val rParts = Regex("\\d+").findAll(remote).mapNotNull { it.value.toIntOrNull() }.toList()
+        val cParts = Regex("\\d+").findAll(current).mapNotNull { it.value.toIntOrNull() }.toList()
 
-        return try {
-            val rParts = cleanRemote.split(".", "-", "b", "a").filter { it.isNotBlank() }.mapNotNull { it.toIntOrNull() }
-            val cParts = cleanCurrent.split(".", "-", "b", "a").filter { it.isNotBlank() }.mapNotNull { it.toIntOrNull() }
-
-            val maxLen = maxOf(rParts.size, cParts.size)
-            for (i in 0 until maxLen) {
-                val r = if (i < rParts.size) rParts[i] else 0
-                val c = if (i < cParts.size) cParts[i] else 0
-                if (r > c) return true
-                if (r < c) return false
-            }
-            cleanRemote != cleanCurrent
-        } catch (ignored: Exception) {
-            cleanRemote != cleanCurrent
+        val maxLen = maxOf(rParts.size, cParts.size)
+        for (i in 0 until maxLen) {
+            val r = if (i < rParts.size) rParts[i] else 0
+            val c = if (i < cParts.size) cParts[i] else 0
+            if (r > c) return true
+            if (r < c) return false
         }
+
+        // If numeric parts are equal, check suffixes (e.g. 'b' vs '')
+        val rSuffix = Regex("[^a-zA-Z]").replace(remote.trimStart('v', 'V'), "").lowercase()
+        val cSuffix = Regex("[^a-zA-Z]").replace(current.trimStart('v', 'V'), "").lowercase()
+
+        if (rSuffix == cSuffix) return false
+
+        // Stable (empty suffix e.g. 1.3) is newer than beta (suffix e.g. 1.3b)
+        if (rSuffix.isEmpty() && cSuffix.isNotEmpty()) return true
+        if (rSuffix.isNotEmpty() && cSuffix.isEmpty()) return false
+
+        return rSuffix > cSuffix
     }
 
     fun downloadApk(context: Context, downloadUrl: String, fileName: String = "AutoBrightnessGuard-Update.apk") {
@@ -123,7 +144,6 @@ object UpdateChecker {
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             dm.enqueue(request)
         } catch (t: Throwable) {
-            // Fallback to browser
             openInBrowser(context, downloadUrl)
         }
     }
