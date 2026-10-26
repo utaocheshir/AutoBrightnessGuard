@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Auto Brightness Guard</string>
+    <string name="app_description">Не даёт OxygenOS сбрасывать обученную кривую автояркости после выключения экрана. Область действия: системный фреймворк.</string>
+    <string name="tab_overview">Обзор</string>
+    <string name="tab_logs">Логи</string>
+    <string name="tab_tools">Инструменты</string>
+    <string name="tab_faq">Справка</string>
+    <string name="status_ready">Модуль установлен и готов</string>
+    <string name="status_framework">Область: Системный фреймворк</string>
+    <string name="device_compatibility">Проверка совместимости</string>
+    <string name="root_status">Статус Root</string>
+    <string name="root_available">Root доступен</string>
+    <string name="root_unavailable">Root не обнаружен</string>
+    <string name="copy_command">Копировать команду</string>
+    <string name="copied_to_clipboard">Команда скопирована в буфер</string>
+    <string name="open_lsposed">Открыть LSPosed Manager</string>
+    <string name="read_live_logs">Прочитать логи (su logcat)</string>
+    <string name="clear_logs">Очистить логи</string>
+    <string name="share_report">Поделиться отчётом</string>
+    <string name="hide_icon_title">Скрыть иконку в лаунчере</string>
+    <string name="hide_icon_desc">Скрывает ярлык приложения из меню. Открыть настройки можно в любой момент через менеджер LSPosed.</string>
+    <string name="tab_settings">Настройки</string>
+    <string name="pref_block_reset_title">Блокировка сброса автояркости</string>
+    <string name="pref_block_reset_desc">Блокирует вызовы resetAutoBrightness() контроллера Oplus, сохраняя обученную кривую яркости.</string>
+    <string name="pref_block_ambient_title">Блокировка Ambient Adapter (1.2b)</string>
+    <string name="pref_block_ambient_desc">Блокирует сброс параметров сплайна и адаптации освещения (OplusBrightnessAmbientAdapter).</string>
+    <string name="pref_strict_alarm_title">Строгое правило Alarm</string>
+    <string name="pref_strict_alarm_desc">Игнорирует имя лямбды и ориентируется исключительно на стек вызовов таймера AlarmManager.</string>
+    <string name="pref_verbose_log_title">Подробное логирование</string>
+    <string name="pref_verbose_log_desc">Записывать подробные стеки вызовов для отладки в системный журнал logcat.</string>
+    <string name="check_updates">Проверить обновления</string>
+    <string name="checking_updates">Проверка обновлений на GitHub...</string>
+    <string name="update_available">Доступно обновление</string>
+    <string name="up_to_date">У вас установлена актуальная версия</string>
+    <string name="download_apk">Скачать APK</string>
+    <string name="view_release">Открыть на GitHub</string>
+</resources>

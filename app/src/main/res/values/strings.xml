@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Auto Brightness Guard</string>
+    <string name="app_description">Stops OxygenOS from resetting the learned auto-brightness curve after the screen has been off. Scope: System Framework.</string>
+    <string name="tab_overview">Overview</string>
+    <string name="tab_logs">Logs</string>
+    <string name="tab_tools">Tools</string>
+    <string name="tab_faq">FAQ</string>
+    <string name="status_ready">Module Installed &amp; Ready</string>
+    <string name="status_framework">System Framework Scope</string>
+    <string name="device_compatibility">Compatibility Check</string>
+    <string name="root_status">Root Status</string>
+    <string name="root_available">Root Available</string>
+    <string name="root_unavailable">Root Not Detected</string>
+    <string name="copy_command">Copy Command</string>
+    <string name="copied_to_clipboard">Copied to clipboard</string>
+    <string name="open_lsposed">Open LSPosed Manager</string>
+    <string name="read_live_logs">Fetch Live Logs (su)</string>
+    <string name="clear_logs">Clear Logs</string>
+    <string name="share_report">Share Diagnostic Report</string>
+    <string name="hide_icon_title">Hide Launcher Icon</string>
+    <string name="hide_icon_desc">Hide this app from the app drawer. You can always access it through LSPosed Manager.</string>
+    <string name="tab_settings">Settings</string>
+    <string name="pref_block_reset_title">Block Brightness Reset</string>
+    <string name="pref_block_reset_desc">Intercepts and blocks resetAutoBrightness() calls triggered on screen-off timer.</string>
+    <string name="pref_block_ambient_title">Block Ambient Adapter Reset</string>
+    <string name="pref_block_ambient_desc">Blocks resetAmbientAdapter() in OplusBrightnessAmbientAdapter, preserving ambient interpolation curves.</string>
+    <string name="pref_strict_alarm_title">Strict Alarm Rule Only</string>
+    <string name="pref_strict_alarm_desc">Bypasses lambda name matching and solely checks AlarmManager stack frames.</string>
+    <string name="pref_verbose_log_title">Verbose Debug Logging</string>
+    <string name="pref_verbose_log_desc">Log every passed caller stack in logcat for deep diagnostics.</string>
+    <string name="check_updates">Check Updates</string>
+    <string name="checking_updates">Checking GitHub for updates...</string>
+    <string name="update_available">New update available</string>
+    <string name="up_to_date">You are running the latest version</string>
+    <string name="download_apk">Download APK</string>
+    <string name="view_release">View on GitHub</string>
+</resources>
