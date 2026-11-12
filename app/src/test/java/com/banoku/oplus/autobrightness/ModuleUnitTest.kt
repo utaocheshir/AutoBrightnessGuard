@@ -14,10 +14,14 @@ class ModuleUnitTest {
 
     @Test
     fun versionAndTagCheck() {
-        assertEquals("1.3b", AutoBrightnessModule.VERSION)
+        assertEquals("1.4.0", AutoBrightnessModule.VERSION)
         assertEquals("AutoBrightnessGuard", AutoBrightnessModule.TAG)
         assertEquals("persist.autobrightness.block_reset", AutoBrightnessModule.PROP_BLOCK_RESET)
         assertEquals("persist.autobrightness.block_ambient", AutoBrightnessModule.PROP_BLOCK_AMBIENT)
+        assertEquals("persist.autobrightness.udls_shield", AutoBrightnessModule.PROP_UDLS_SHIELD)
+        assertEquals("persist.autobrightness.min_floor", AutoBrightnessModule.PROP_MIN_FLOOR)
+        assertEquals("persist.autobrightness.debounce_lock", AutoBrightnessModule.PROP_DEBOUNCE_LOCK)
+        assertEquals("persist.autobrightness.disable_smart_dimming", AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING)
     }
 
     @Test

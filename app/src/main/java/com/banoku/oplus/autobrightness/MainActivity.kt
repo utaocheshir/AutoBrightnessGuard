@@ -602,6 +602,12 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
     var strictAlarm by remember { mutableStateOf(prefs.getBoolean("pref_strict_alarm", false)) }
     var verboseLog by remember { mutableStateOf(prefs.getBoolean("pref_verbose_log", false)) }
 
+    // ColorOS 17 / OxygenOS 17 toggles
+    var udlsShield by remember { mutableStateOf(prefs.getBoolean("pref_udls_shield", true)) }
+    var minFloor by remember { mutableStateOf(prefs.getBoolean("pref_min_floor", true)) }
+    var debounceLock by remember { mutableStateOf(prefs.getBoolean("pref_debounce_lock", true)) }
+    var disableSmartDimming by remember { mutableStateOf(prefs.getBoolean("pref_disable_smart_dimming", true)) }
+
     var currentLang by remember { mutableStateOf(LocaleHelper.getSelectedLanguage(context)) }
 
     LazyColumn(
@@ -722,6 +728,70 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                     prefs.edit().putBoolean("pref_strict_alarm", newState).apply()
                     scope.launch {
                         RootHelper.setSystemProperty(AutoBrightnessModule.PROP_STRICT_ALARM, newState)
+                    }
+                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
+                title = "UDLS Shield (Защита подэкранного датчика)",
+                desc = "Нейтрализует запаздывающее вычитание света OLED-пикселей в OplusUnderDisplaySensorController. Убирает волнообразное плавание яркости.",
+                checked = udlsShield,
+                onCheckedChange = { newState ->
+                    udlsShield = newState
+                    prefs.edit().putBoolean("pref_udls_shield", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_UDLS_SHIELD, newState)
+                    }
+                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
+                title = "Night Reading Floor (Минимум 8.5 нит)",
+                desc = "Поднимает минимальную планку подсветки в темноте с 1.5 нит до комфортных 8.5 нит в OplusAutomaticBrightnessControllerEx.",
+                checked = minFloor,
+                onCheckedChange = { newState ->
+                    minFloor = newState
+                    prefs.edit().putBoolean("pref_min_floor", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, newState)
+                    }
+                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
+                title = "Debounce Stabilizer (3200 мс)",
+                desc = "Фиксирует задержку затемнения на 3200 мс, подавляя резкие 300мс скачки от микродрожи рук (OplusLuxDebounceManager).",
+                checked = debounceLock,
+                onCheckedChange = { newState ->
+                    debounceLock = newState
+                    prefs.edit().putBoolean("pref_debounce_lock", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DEBOUNCE_LOCK, newState)
+                    }
+                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
+                title = "Smart Dimming Neutralizer",
+                desc = "Отключает скрытое 18% урезание яркости в браузерах, Telegram и читалках (OplusAppBrightnessController).",
+                checked = disableSmartDimming,
+                onCheckedChange = { newState ->
+                    disableSmartDimming = newState
+                    prefs.edit().putBoolean("pref_disable_smart_dimming", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING, newState)
                     }
                     Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
                 }
@@ -1158,7 +1228,7 @@ fun ToolsTabContent(
                         }
                         null -> {
                             Text(
-                                text = "Текущая версия: v1.3b",
+                                text = "Текущая версия: v1.4.0",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1306,7 +1376,7 @@ fun ToolsTabContent(
                             val comp = DeviceCompatibility.getCompatibilitySummary()
                             val report = buildString {
                                 appendLine("=== Auto Brightness Guard Diagnostic Report ===")
-                                appendLine("Module Version: 1.3b (LibXposed API 102)")
+                                appendLine("Module Version: 1.4.0 (LibXposed API 102)")
                                 appendLine("Device: ${comp.deviceModel}")
                                 appendLine("OS: ${comp.androidVersion}")
                                 appendLine("Fingerprint: ${comp.fingerprint}")
@@ -1508,8 +1578,8 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         item {
             FaqItem(
                 id = 0,
-                question = "Что нового в версии 1.3b?",
-                answer = "1. SystemProperties IPC: переключатели в приложении теперь меняют свойства persist.autobrightness.* через root. Хук внутри system_server считывает их моментально на лету без перезагрузки смартфона!\n2. Точный парсинг логов: чтение самого свежего журнала LSPosed с отображением всех заблокированных сбросов.\n3. Виджет статистики на главном экране (количество заблокированных сбросов и время последней защиты).\n4. Выбор языка приложения прямо в настройках (Русский, English, Українська).\n5. Адаптация под причину сброса AutoReset в OxygenOS 16.",
+                question = "Что нового в версии 1.4.0 (ColorOS 17 Edition)?",
+                answer = "1. UDLS Shield: блокировка 0.8 Гц колебаний подэкранного датчика (OplusUnderDisplaySensorController).\n2. Night Reading Floor: подъем минимума подсветки в темноте с 1.5 нит до 8.5 нит.\n3. Debounce Stabilizer: фиксация 3200 мс задержки затемнения вместо дерганых 300 мс.\n4. Smart Dimming Neutralizer: отмена скрытого 18% урезания яркости в Chrome и Telegram.\n5. Dual 360° Sensor Balancer: защита от затенения задней камеры пальцем.",
                 isExpanded = expandedFaq == 0,
                 onToggle = { expandedFaq = if (expandedFaq == 0) null else 0 }
             )
@@ -1563,7 +1633,23 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Версия 1.3b (Текущая)",
+                            text = "Версия 1.4.0 (Текущая — ColorOS 17)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF10B981)
+                        )
+                        Text(
+                            text = "• UDLS Shield: устранен паразитный резонанс подэкранного датчика света.\n• Night Reading Floor: минимум подсветки поднят с 1.5 нит до 8.5 нит.\n• Debounce Stabilizer: заблокирован режим FAST (300 мс) от микродрожи рук.\n• Smart Dimming Neutralizer: снято -18% ограничение яркости в приложениях.\n• Dual 360° Sensor Balancer: защита от перекрытия задней камеры пальцем.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Версия 1.3b",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFFFFB300)
@@ -1626,7 +1712,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.3b\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
+                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.4.0\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
