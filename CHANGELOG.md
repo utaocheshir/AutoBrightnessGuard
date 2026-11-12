@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.0 (versionCode 14) — ColorOS 17 / OxygenOS 12–17 (Verified Engine)
+
+### Проверенные перехватчики на базе реального байткода `oplus-services.jar` (ColorOS 17)
+- **Защита сброса кривой при активном DragOpt**: перехватываются обе перегрузки `OplusAutomaticBrightnessController.resetAutoBrightness()` и `resetAutoBrightness(int resetType)` — в ColorOS 17 будильник `lambda$new$1()` при `isBrightnessDragOptSupport() == true` вызывает `resetAutoBrightness(1)` напрямую в обход версии без аргументов.
+- **Анти-дрейф в покое (`OplusBrightnessAmbientAdapter`)**: подавляются фоновые микроподстройки `handleStableForceChange` (`REASON.StableForceChange`) и `handleSmallChangeAnimating` (`REASON.RecoverChange`), вызывавшие волнообразное «плавание» яркости при неизменном свете.
+- **Стабилизатор окон задержки (`StabilityProcess`)**: `getAccelerateScale(...)` ограничивается значением `<= 1.0f`, чтобы `LuxQueueProcess` не сжимал окна `SceneConfig` от микродрожи рук.
+- **Ночной минимум 8.5 нит и защита от 20-мин затемнения в темноте**:
+  - `OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing(Builder)` возвращает `true`, отключая скрытое прогрессивное затемнение через 20 минут (`INTERVAL_TWENTY_MIN = 1200000 ms`) в тёмном помещении.
+  - `OplusBrightnessPostProcessingManager.convertNitToBrightness(Builder)` удерживает физический порог `>= 8.5f` нит (когда включена автояркость, валиден датчик освещённости и пользователь не крутит ползунок вручную).
+- **Отмена поприложенческого затемнения (`OplusFeatureReduceBrightness`)**: `isReduceDisabled()` возвращает `true`, отключая снижение яркости через `AppFossReduceConfig` в браузерах, мессенджерах и читалках.
+- **Балансировщик 360° Aux-датчика (`LuxEvent$LuxEventResult.calculateAuxLux`)**: сглаживает резкие скачки `auxLux > mainLux` в помещении вместо мгновенного переключения на тыловой датчик.
+- **Полная обратная совместимость**: сохранена защита `resetAutoBrightness()` и `OplusBrightnessAmbientAdapter.resetAmbientAdapter(String)` для OxygenOS/ColorOS 12–16.
+
 ## 1.3b (versionCode 13)
 
 ### Настройки на лету через SystemProperties (без перезагрузки)

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Auto Brightness Guard</string>
-    <string name="app_description">Запобігає скиданню навченої кривої автояскравості в OxygenOS/ColorOS після вимкнення екрана. Область: Системний фреймворк.</string>
+    <string name="app_description">Запобігає скиданню кривої автояскравості, надмірному затемненню в темряві та плаванню яскравості в OxygenOS/ColorOS 12–17. Область: Системний фреймворк.</string>
     <string name="tab_overview">Огляд</string>
     <string name="tab_logs">Логи</string>
     <string name="tab_tools">Інструменти</string>
@@ -22,13 +22,23 @@
     <string name="hide_icon_desc">Приховує ярлик додатка з меню. Відкрити налаштування можна в будь-який момент через менеджер LSPosed.</string>
     <string name="tab_settings">Налаштування</string>
     <string name="pref_block_reset_title">Блокування скидання автояскравості</string>
-    <string name="pref_block_reset_desc">Блокує виклики resetAutoBrightness() контролера Oplus, зберігаючи навчену криву яскравості.</string>
+    <string name="pref_block_reset_desc">Блокує resetAutoBrightness() і resetAutoBrightness(int) за таймером сну (включно з новим шляхом DragOpt у ColorOS 17).</string>
     <string name="pref_block_ambient_title">Блокування Ambient Adapter</string>
-    <string name="pref_block_ambient_desc">Блокує скидання параметрів сплайна та адаптації освітлення (OplusBrightnessAmbientAdapter / AutoReset).</string>
+    <string name="pref_block_ambient_desc">Блокує resetAmbientAdapter() в OplusBrightnessAmbientAdapter під час AutoReset, зберігаючи адаптацію освітлення.</string>
+    <string name="pref_stability_guard_title">Анти-дрейф яскравості у спокої</string>
+    <string name="pref_stability_guard_desc">Вимикає мікропідлаштування handleStableForceChange і handleSmallChangeAnimating в OplusBrightnessAmbientAdapter при рівному світлі.</string>
+    <string name="pref_min_floor_title">Нічний мінімум 8.5 ніт і DarkEnv Guard</string>
+    <string name="pref_min_floor_desc">Пропускає 20-хвилинне затемнення (OplusFeatureDarkEnvReduceBrightness) і тримає &gt;= 8.5 ніт у convertNitToBrightness().</string>
+    <string name="pref_debounce_lock_title">Стабілізатор вікон затримки (1.0x)</string>
+    <string name="pref_debounce_lock_desc">Обмежує StabilityProcess.getAccelerateScale() до 1.0x, щоб LuxQueueProcess не стискав таймери через мікродрижання рук.</string>
+    <string name="pref_smart_dimming_title">Вимкнення App Smart Dimming</string>
+    <string name="pref_smart_dimming_desc">Вимикає зниження яскравості для окремих додатків AppFossReduceConfig в OplusFeatureReduceBrightness (браузери, месенджери).</string>
+    <string name="pref_dual_sensor_title">Балансувальник 360° Aux-датчика</string>
+    <string name="pref_dual_sensor_desc">Згладжує стрибки заднього датчика в приміщенні (LuxEventResult.calculateAuxLux) замість різкого переходу на auxLux.</string>
     <string name="pref_strict_alarm_title">Суворе правило Alarm</string>
     <string name="pref_strict_alarm_desc">Ігнорує назву лямбди та орієнтується виключно на стек викликів таймера AlarmManager.</string>
     <string name="pref_verbose_log_title">Розширене логування</string>
-    <string name="pref_verbose_log_desc">Записувати детальні стеки викликів для налагодження в системний журнал logcat.</string>
+    <string name="pref_verbose_log_desc">Записувати періодичні спрацьовування фільтрів стабільності та яскравості у журнал LSPosed / logcat.</string>
     <string name="check_updates">Перевірити оновлення</string>
     <string name="checking_updates">Перевірка оновлень на GitHub...</string>
     <string name="update_available">Доступне оновлення</string>
@@ -46,4 +56,7 @@
     <string name="stats_last_blocked">Останнє блокування: %s</string>
     <string name="stats_no_events">Очікування 10+ хвилин сну екрана</string>
     <string name="system_properties_hint">Налаштування застосовуються миттєво на льоту через SystemProperties без перезавантаження</string>
+    <string name="engine_summary_title">Перевірений рушій перехоплення (ColorOS 12–17 / OxygenOS)</string>
+    <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() і (int) + resetAmbientAdapter\n2. Anti-Drift &amp; Debounce: OplusBrightnessAmbientAdapter + StabilityProcess\n3. Floor 8.5 nit + DarkEnv &amp; ReduceBrightness bypass + AuxLux balancer</string>
+    <string name="toast_applied_live">Застосовано на льоту без перезавантаження</string>
 </resources>

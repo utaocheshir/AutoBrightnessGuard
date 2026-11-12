@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.3b-blue.svg" alt="Release" /></a>
+  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.4.0-blue.svg" alt="Release" /></a>
   <a href="https://github.com/libxposed"><img src="https://img.shields.io/badge/LibXposed-API%20102-orange.svg" alt="LibXposed API 102" /></a>
   <a href="https://github.com/utaocheshir/AutoBrightnessGuard"><img src="https://img.shields.io/badge/Target-OnePlus%20%7C%20OxygenOS%20%7C%20ColorOS-green.svg" alt="Platform" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg" alt="License" /></a>
@@ -23,23 +23,20 @@
 <a name="english"></a>
 ## 🇬🇧 English
 
-**Auto Brightness Guard** is a modern LSPosed module (built on **LibXposed API 102**) for **OnePlus / OPPO / Realme** smartphones (running OxygenOS, ColorOS, or Realme UI on Android 12–16). It permanently fixes the issue where OxygenOS wipes your learned auto-brightness curve after the screen has been turned off.
+**Auto Brightness Guard** is a modern LSPosed module (built on **LibXposed API 102**) for **OnePlus / OPPO / Realme** smartphones (running OxygenOS, ColorOS, or Realme UI on Android 12–17). It prevents OxygenOS/ColorOS from wiping your learned auto-brightness curve, stops night over-dimming, and eliminates steady-light brightness drifting.
 
 ### 📌 The Problem
-In OxygenOS and ColorOS, `OplusAutomaticBrightnessController` sets an alarm for **10 minutes** every time the screen turns off. Once the device sleeps past this threshold, the timer fires and triggers:
-1. `resetAutoBrightness()` — completely wipes the user's trained adaptive brightness adjustments, reverting to the rigid factory spline.
-2. `OplusBrightnessAmbientAdapter.resetAmbientAdapter("resetAutoBrightness")` — resets ambient lux interpolation and spline adaptation.
-
-As a result, picking up your phone after sleep frequently leaves the display either blindingly bright or pitch-dark.
+In OxygenOS and ColorOS 12–17:
+1. `OplusAutomaticBrightnessController` sets an alarm for **10 minutes** every time the screen turns off, triggering `resetAutoBrightness()` / `resetAutoBrightness(int)` (ColorOS 17 DragOpt path) and `OplusBrightnessAmbientAdapter.resetAmbientAdapter("AutoReset")`.
+2. In ColorOS 17, post-processors (`OplusFeatureDarkEnvReduceBrightness` after 20 min, `OplusFeatureReduceBrightness` per-app dimming) aggressively lower brightness nits, while `OplusBrightnessAmbientAdapter` (`handleStableForceChange` / `handleSmallChangeAnimating`), `StabilityProcess`, and `LuxEventResult.calculateAuxLux` can cause steady-light drifting.
 
 ### 🛡️ How Auto Brightness Guard Fixes It
-- **Dual-Layer Interception:**
-  1. `rule=lambda`: matches the synthetic alarm callback (`lambda$new$1`).
-  2. `rule=alarm`: structural fallback matching `android.app.AlarmManager$ListenerWrapper`. Prevents OTA updates that rename synthetic lambdas from breaking the hook.
-- **Secondary Ambient Hook (New in v1.2b):** Blocks `resetAmbientAdapter` in `OplusBrightnessAmbientAdapter` when triggered by screen-off timers.
-- **ART Compiler Deoptimization:** Forces ART deoptimization on target methods to prevent compiler inlining from bypassing the hook.
-- **Fail-Open Safety:** Any unexpected internal errors or non-alarm callers pass through untouched, preventing system stability issues or bootloops.
-- **RemotePreferences:** Settings can be modified on the fly in the companion app without restarting `system_server`.
+- **Dual-Layer Curve Reset Guard:** Intercepts **both** `resetAutoBrightness()` and `resetAutoBrightness(int)` (for ColorOS 17 DragOpt) plus `resetAmbientAdapter(String)` using `rule=lambda` (`lambda$new$1`) and `rule=alarm` (`AlarmManager$ListenerWrapper`).
+- **Anti-Drift & Debounce Lock (v1.4.0):** Suppresses steady-light micro-drift (`handleStableForceChange`, `handleSmallChangeAnimating`) and caps `StabilityProcess.getAccelerateScale()` at `<= 1.0f`.
+- **Night Reading Floor & Smart Dimming Bypass (v1.4.0):** Skips 20-min dark-room progressive dimming (`OplusFeatureDarkEnvReduceBrightness`), enforces `>= 8.5 nits` in `OplusBrightnessPostProcessingManager.convertNitToBrightness()`, and disables per-app dimming in `OplusFeatureReduceBrightness`.
+- **Dual 360° Aux Sensor Balancer (v1.4.0):** Smooths indoor rear-sensor spikes in `LuxEvent$LuxEventResult.calculateAuxLux()`.
+- **ART Compiler Deoptimization & Fail-Open Safety:** Forces ART deoptimization on target methods and falls back safely on any error.
+- **Instant SystemProperties IPC:** Settings apply immediately via `persist.autobrightness.*` without restarting `system_server`.
 
 ### ✨ Companion App Features
 - **Overview:** Displays module readiness, device compatibility check (OnePlus/OPPO/Realme, Android & API level), and a launcher icon hide/show toggle.
@@ -74,23 +71,20 @@ Expected output upon successful block:
 <a name="русский"></a>
 ## 🇷🇺 Русский
 
-**Auto Brightness Guard** — это современный LSPosed-модуль (на базе **LibXposed API 102**) для смартфонов **OnePlus / OPPO / Realme** (OxygenOS, ColorOS, Realme UI на Android 12–16), который навсегда устраняет проблему сброса обученной пользователем кривой автояркости после выключения экрана.
+**Auto Brightness Guard** — это современный LSPosed-модуль (на базе **LibXposed API 102**) для смартфонов **OnePlus / OPPO / Realme** (OxygenOS, ColorOS, Realme UI на Android 12–17). Устраняет сброс кривой автояркости после сна, чрезмерное ночное затемнение и «плавание» подсветки при ровном освещении.
 
 ### 📌 В чём суть проблемы?
-В прошивках OxygenOS и ColorOS контроллер `OplusAutomaticBrightnessController` заводит таймер на **10 минут** при каждом выключении экрана. Когда смартфон находится в режиме сна дольше этого времени, таймер срабатывает и запускает:
-1. `resetAutoBrightness()` — полностью стирает персонально обученные точки адаптивной яркости и сбрасывает кривую на заводской профиль.
-2. `OplusBrightnessAmbientAdapter.resetAmbientAdapter("resetAutoBrightness")` — сбрасывает сплайны интерполяции окружающего освещения (ambient lux).
-
-В итоге после каждого сна экран внезапно становится слишком тёмным или слепит в темноте, заставляя постоянно подстраивать ползунок вручную.
+В прошивках OxygenOS и ColorOS 12–17:
+1. `OplusAutomaticBrightnessController` заводит таймер на **10 минут** при выключении экрана, вызывая `resetAutoBrightness()` / `resetAutoBrightness(int)` (путь DragOpt в ColorOS 17) и `OplusBrightnessAmbientAdapter.resetAmbientAdapter("AutoReset")`.
+2. В ColorOS 17 постпроцессоры (`OplusFeatureDarkEnvReduceBrightness` через 20 мин и `OplusFeatureReduceBrightness` по приложениям) дополнительно занижают ниты, а `handleStableForceChange`, `handleSmallChangeAnimating`, `StabilityProcess` и `LuxEventResult.calculateAuxLux` вызывают дрейф и скачки яркости на ровном месте.
 
 ### 🛡️ Как устроена защита
-- **Двухуровневый перехват:**
-  1. `rule=lambda`: перехват вызова синтетической лямбды контроллера (`lambda$new$1`).
-  2. `rule=alarm`: резервный структурный перехват через стек `android.app.AlarmManager$ListenerWrapper`. Если в будущих OTA-обновлениях лямбду переименуют, модуль продолжит работать.
-- **Вторичный перехват (Новинка 1.2b):** блокирует сброс параметров сплайна в `OplusBrightnessAmbientAdapter`.
-- **Деоптимизация ART:** запрещает компилятору инлайнить методы, гарантируя 100% срабатывание хука.
-- **Безопасность Fail-Open:** любые нецелевые вызовы пропускаются штатно (исключены зависания и бутлупы).
-- **RemotePreferences:** параметры модуля переключаются в интерфейсе приложения без перезагрузки смартфона.
+- **Защита кривой (12–17):** перехват **обеих** перегрузок `resetAutoBrightness()` и `resetAutoBrightness(int)` + `resetAmbientAdapter(String)` по стеку `lambda$new$1` и `AlarmManager$ListenerWrapper`.
+- **Анти-дрейф и стабилизация задержки (1.4.0):** подавление фоновых подстроек `OplusBrightnessAmbientAdapter` в покое и ограничение `StabilityProcess.getAccelerateScale() <= 1.0f`.
+- **Ночной минимум 8.5 нит и отмена Smart Dimming (1.4.0):** пропуск 20-минутного затемнения `OplusFeatureDarkEnvReduceBrightness`, порог `>= 8.5` нит в `convertNitToBrightness()` и отключение поприложенческого затемнения `OplusFeatureReduceBrightness`.
+- **Балансировщик 360° Aux-датчика (1.4.0):** сглаживание скачков тылового датчика в помещении в `LuxEvent$LuxEventResult.calculateAuxLux()`.
+- **Деоптимизация ART и Fail-Open:** все перехваты защищены от инлайнинга и отказоустойчивы.
+- **Настройки на лету:** переключатели применяются мгновенно через `SystemProperties` (`persist.autobrightness.*`).
 
 ### ✨ Возможности приложения-компаньона
 - **Обзор:** статус работы, проверка совместимости устройства и переключатель скрытия ярлыка в лаунчере.

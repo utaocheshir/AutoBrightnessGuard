@@ -384,13 +384,13 @@ fun OverviewTabContent(
 
                     Column {
                         Text(
-                            text = "Двойной системный перехват (v1.3b)",
+                            text = stringResource(R.string.engine_summary_title),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "1. OplusAutomaticBrightnessController.resetAutoBrightness()\n2. OplusBrightnessAmbientAdapter.resetAmbientAdapter(AutoReset)",
+                            text = stringResource(R.string.engine_summary_body),
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Medium,
@@ -563,7 +563,7 @@ private fun HeaderHero() {
                 color = Color(0xFFFFC107).copy(alpha = 0.2f)
             ) {
                 Text(
-                    text = "v1.3b",
+                    text = "v1.4.0",
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
@@ -602,6 +602,14 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
     var strictAlarm by remember { mutableStateOf(prefs.getBoolean("pref_strict_alarm", false)) }
     var verboseLog by remember { mutableStateOf(prefs.getBoolean("pref_verbose_log", false)) }
 
+    // ColorOS 17 / OxygenOS 17 verified toggles
+    var stabilityGuard by remember { mutableStateOf(prefs.getBoolean("pref_stability_guard", true)) }
+    var minFloor by remember { mutableStateOf(prefs.getBoolean("pref_min_floor", true)) }
+    var debounceLock by remember { mutableStateOf(prefs.getBoolean("pref_debounce_lock", true)) }
+    var disableSmartDimming by remember { mutableStateOf(prefs.getBoolean("pref_disable_smart_dimming", true)) }
+    var dualSensorGuard by remember { mutableStateOf(prefs.getBoolean("pref_dual_sensor_guard", true)) }
+
+    val toastApplied = stringResource(R.string.toast_applied_live)
     var currentLang by remember { mutableStateOf(LocaleHelper.getSelectedLanguage(context)) }
 
     LazyColumn(
@@ -730,6 +738,91 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
 
         item {
             SettingSwitchCard(
+                title = stringResource(R.string.pref_stability_guard_title),
+                desc = stringResource(R.string.pref_stability_guard_desc),
+                checked = stabilityGuard,
+                testTag = "switch_stability_guard",
+                onCheckedChange = { newState ->
+                    stabilityGuard = newState
+                    prefs.edit().putBoolean("pref_stability_guard", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_STABILITY_GUARD, newState)
+                    }
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
+                title = stringResource(R.string.pref_min_floor_title),
+                desc = stringResource(R.string.pref_min_floor_desc),
+                checked = minFloor,
+                testTag = "switch_min_floor",
+                onCheckedChange = { newState ->
+                    minFloor = newState
+                    prefs.edit().putBoolean("pref_min_floor", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, newState)
+                    }
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
+                title = stringResource(R.string.pref_debounce_lock_title),
+                desc = stringResource(R.string.pref_debounce_lock_desc),
+                checked = debounceLock,
+                testTag = "switch_debounce_lock",
+                onCheckedChange = { newState ->
+                    debounceLock = newState
+                    prefs.edit().putBoolean("pref_debounce_lock", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DEBOUNCE_LOCK, newState)
+                    }
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
+                title = stringResource(R.string.pref_smart_dimming_title),
+                desc = stringResource(R.string.pref_smart_dimming_desc),
+                checked = disableSmartDimming,
+                testTag = "switch_smart_dimming",
+                onCheckedChange = { newState ->
+                    disableSmartDimming = newState
+                    prefs.edit().putBoolean("pref_disable_smart_dimming", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING, newState)
+                    }
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
+                title = stringResource(R.string.pref_dual_sensor_title),
+                desc = stringResource(R.string.pref_dual_sensor_desc),
+                checked = dualSensorGuard,
+                testTag = "switch_dual_sensor",
+                onCheckedChange = { newState ->
+                    dualSensorGuard = newState
+                    prefs.edit().putBoolean("pref_dual_sensor_guard", newState).apply()
+                    scope.launch {
+                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DUAL_SENSOR_GUARD, newState)
+                    }
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        item {
+            SettingSwitchCard(
                 title = stringResource(R.string.pref_verbose_log_title),
                 desc = stringResource(R.string.pref_verbose_log_desc),
                 checked = verboseLog,
@@ -739,7 +832,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                     scope.launch {
                         RootHelper.setSystemProperty(AutoBrightnessModule.PROP_VERBOSE_LOG, newState)
                     }
-                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -805,6 +898,7 @@ fun SettingSwitchCard(
     title: String,
     desc: String,
     checked: Boolean,
+    testTag: String? = null,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Card(
@@ -837,7 +931,8 @@ fun SettingSwitchCard(
 
             Switch(
                 checked = checked,
-                onCheckedChange = onCheckedChange
+                onCheckedChange = onCheckedChange,
+                modifier = if (testTag != null) Modifier.testTag(testTag) else Modifier
             )
         }
     }
@@ -1159,7 +1254,7 @@ fun ToolsTabContent(
                         }
                         null -> {
                             Text(
-                                text = "Текущая версия: v1.3b",
+                                text = "Текущая версия: v1.4.0",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1304,14 +1399,16 @@ fun ToolsTabContent(
                             val comp = DeviceCompatibility.getCompatibilitySummary()
                             val report = buildString {
                                 appendLine("=== Auto Brightness Guard Diagnostic Report ===")
-                                appendLine("Module Version: 1.3b (LibXposed API 102)")
+                                appendLine("Module Version: 1.4.0 (LibXposed API 102)")
                                 appendLine("Device: ${comp.deviceModel}")
                                 appendLine("OS: ${comp.androidVersion}")
                                 appendLine("Fingerprint: ${comp.fingerprint}")
                                 appendLine("Root Status: ${if (RootHelper.isRootAvailable()) "Available" else "Not detected"}")
                                 appendLine("Package: com.banoku.oplus.autobrightness")
-                                appendLine("Target: com.android.server.display.OplusAutomaticBrightnessController")
+                                appendLine("Controller: com.android.server.display.OplusAutomaticBrightnessController")
                                 appendLine("Ambient: com.android.server.display.feature.ambience.OplusBrightnessAmbientAdapter")
+                                appendLine("PostProcess: OplusBrightnessPostProcessingManager, OplusFeatureDarkEnvReduceBrightness, OplusFeatureReduceBrightness")
+                                appendLine("Stability/Aux: StabilityProcess, LuxEvent\$LuxEventResult")
                                 appendLine("Timestamp: ${System.currentTimeMillis()}")
                                 appendLine("================================================")
                             }
@@ -1506,8 +1603,8 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         item {
             FaqItem(
                 id = 0,
-                question = "Что нового в версии 1.3b?",
-                answer = "1. SystemProperties IPC: переключатели в приложении теперь меняют свойства persist.autobrightness.* через root. Хук внутри system_server считывает их моментально на лету без перезагрузки смартфона!\n2. Точный парсинг логов: чтение самого свежего журнала LSPosed с отображением всех заблокированных сбросов.\n3. Виджет статистики на главном экране (количество заблокированных сбросов и время последней защиты).\n4. Выбор языка приложения прямо в настройках (Русский, English, Українська).\n5. Адаптация под причину сброса AutoReset в OxygenOS 16.",
+                question = "Что нового в версии 1.4.0 (Verified ColorOS 17 Engine)?",
+                answer = "1. Защита сброса (ColorOS 17 DragOpt): перехват обеих перегрузок resetAutoBrightness() и resetAutoBrightness(int), т.к. ColorOS 17 вызывает перегрузку с аргументом напрямую по таймеру.\n2. Анти-дрейф в покое: блокировка handleStableForceChange и handleSmallChangeAnimating в OplusBrightnessAmbientAdapter, убирающая плавание яркости при неизменном освещении.\n3. Стабилизатор окон задержки: ограничение StabilityProcess.getAccelerateScale() до 1.0x против микродрожи рук.\n4. Ночной минимум 8.5 нит + DarkEnv Guard: отмена 20-минутного прогрессивного затемнения (OplusFeatureDarkEnvReduceBrightness) и калиброванный минимум в нитах в OplusBrightnessPostProcessingManager.convertNitToBrightness().\n5. Отмена Smart Dimming: принудительный isReduceDisabled() в OplusFeatureReduceBrightness (AppFossReduceConfig).\n6. Балансировщик 360° Aux-датчика: сглаживание скачков в помещении в LuxEventResult.calculateAuxLux().",
                 isExpanded = expandedFaq == 0,
                 onToggle = { expandedFaq = if (expandedFaq == 0) null else 0 }
             )
@@ -1516,8 +1613,8 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         item {
             FaqItem(
                 id = 1,
-                question = "В чём заключается баг автояркости OxygenOS?",
-                answer = "В прошивках OnePlus (OxygenOS 12, 13, 14, 15, 16) контроллер OplusAutomaticBrightnessController заводит таймер на 10 минут при выключении экрана. Когда телефон «спит» дольше этого времени, таймер вызывает метод resetAutoBrightness() и сброс адаптера (AutoReset). Это стирает обученную кривую яркости под предпочтения пользователя и откатывает её к заводскому профилю.",
+                question = "В чём заключается баг автояркости OxygenOS / ColorOS?",
+                answer = "В прошивках OnePlus / OPPO (OxygenOS / ColorOS 12–17) контроллер OplusAutomaticBrightnessController заводит таймер AlarmManager (обычно на 10 минут) при выключении экрана. По истечении времени вызывается resetAutoBrightness() (или resetAutoBrightness(1) при активном DragOpt в ColorOS 17) и OplusBrightnessAmbientAdapter.resetAmbientAdapter(\"AutoReset\"), что стирает обученную кривую пользователя.",
                 isExpanded = expandedFaq == 1,
                 onToggle = { expandedFaq = if (expandedFaq == 1) null else 1 }
             )
@@ -1537,7 +1634,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             FaqItem(
                 id = 3,
                 question = "Влияет ли модуль на расход батареи?",
-                answer = "Нет. Модуль не запускает фоновых служб или бесконечных циклов. Он работает как пассивный перехватчик вызова внутри system_server только в тот момент, когда срабатывает будильник выключения экрана.",
+                answer = "Нет. Модуль не запускает фоновых служб или бесконечных циклов. Перехватчики срабатывают только в момент системных перерасчётов яркости или при срабатывании таймера выключения экрана внутри system_server.",
                 isExpanded = expandedFaq == 3,
                 onToggle = { expandedFaq = if (expandedFaq == 3) null else 3 }
             )
@@ -1561,7 +1658,23 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Версия 1.3b (Текущая)",
+                            text = "Версия 1.4.0 (Текущая — Verified ColorOS 17)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF10B981)
+                        )
+                        Text(
+                            text = "• Перехват resetAutoBrightness() и resetAutoBrightness(int) для совместимости с ColorOS 17 DragOpt.\n• Анти-дрейф в покое: подавление handleStableForceChange / handleSmallChangeAnimating.\n• Стабилизатор задержки: фиксация StabilityProcess.getAccelerateScale <= 1.0x.\n• Ночной минимум 8.5 нит в convertNitToBrightness + пропуск 20-мин затемнения DarkEnv.\n• Отмена поприложенческого затемнения OplusFeatureReduceBrightness (AppFossReduceConfig).\n• Сглаживание 360° Aux-датчика в помещении (LuxEventResult.calculateAuxLux).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Версия 1.3b",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFFFFB300)
@@ -1624,7 +1737,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.3b\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
+                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.4.0\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

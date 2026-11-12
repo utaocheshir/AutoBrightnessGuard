@@ -142,17 +142,22 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:10",
-                message = "v1.3b starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
+                message = "v1.4.0 (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [1/2] controller installed; deopt(reset)=true, lambda=found, deopt=true"
+                message = "Hook [1/7] controller resetAutoBrightness installed (variants=2, lambda=true)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [2/2] ambient adapter installed; deopt=true"
+                message = "Hook [2/7] ambient resetAmbientAdapter(String) installed"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [5b/7] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (8.5 nits) installed"
             ),
             LogEntry(
                 type = LogType.BLOCKED,
@@ -163,6 +168,11 @@ object RootHelper {
                 type = LogType.BLOCKED,
                 time = "20:11:49",
                 message = "BLOCKED resetAmbientAdapter #1 (reason=AutoReset, rule=lambda)"
+            ),
+            LogEntry(
+                type = LogType.INFO,
+                time = "20:15:03",
+                message = "GUARD night floor clamped 2.4 -> 8.5 nits (#1)"
             ),
             LogEntry(
                 type = LogType.PASS,
