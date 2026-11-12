@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0 (versionCode 14) — ColorOS 17 / OxygenOS 17 Edition
+
+### Полная поддержка нового oplus-services.jar (Android 15/16 QPR)
+- **UDLS Shield**: нейтрализация паразитного 0.8 Гц резонанса подэкранного датчика освещенности (`OplusUnderDisplaySensorController.calculateDisplayLeakageLux`). Блокирует просадку люксов и колебания подсветки на ровном месте.
+- **Night Reading Floor**: подъем минимального жесткого порога подсветки с заводских 1.5 нит до комфортных 8.5 нит (`OplusAutomaticBrightnessControllerEx.getAutomaticScreenBrightness`).
+- **Debounce Stabilizer**: фиксация плавного таймера затемнения на 3200 мс (`OplusLuxDebounceManager.getDarkeningDebounceTime`), подавляющая 300мс скачки от микродрожи пальцев при чтении.
+- **Smart Dimming Neutralizer**: отключение скрытого 18% штрафа яркости в Chrome, Telegram и читалках (`OplusAppBrightnessController.applyAppBrightnessPolicy`).
+- **Dual 360° Sensor Balancer**: защита от закрытия ладонью заднего датчика камеры при обычном хвате смартфона.
+- **Полная обратная совместимость**: сохранение хуков для ColorOS 14/15/16 (`resetAutoBrightness` и `resetAmbientAdapter`).
+
 ## 1.3b (versionCode 13)
 
 ### Настройки на лету через SystemProperties (без перезагрузки)
