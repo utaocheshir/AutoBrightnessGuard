@@ -1,0 +1,9 @@
+{
+  "minBacklightNits": 8.5,
+  "darkeningDebounceMs": 3200,
+  "brighteningDebounceMs": 800,
+  "udlsMode": "damped_ema",
+  "disableAppDimming": true,
+  "rearSensorWeightCap": 0.15,
+  "autoResetPoisonedMapper": true
+}
