@@ -12,6 +12,12 @@ on:
       - main
       - master
   workflow_dispatch:
+    inputs:
+      allow_ephemeral_keystore:
+        description: 'Generate a temporary one-off debug keystore if neither debug.keystore.base64 nor DEBUG_KEYSTORE_BASE64 secret exists (breaks in-place updates!)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -33,12 +39,22 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       - name: Prepare Debug Keystore
+        env:
+          KEYSTORE_B64_SECRET: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
-          if [ ! -f debug.keystore.base64 ]; then
-            echo "ERROR: debug.keystore.base64 missing; refusing to generate an incompatible random certificate."
+          if [ -f debug.keystore.base64 ]; then
+            echo "Using debug.keystore.base64 from repository."
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ -n "$KEYSTORE_B64_SECRET" ]; then
+            echo "Using DEBUG_KEYSTORE_BASE64 from GitHub Secrets."
+            printf '%s' "$KEYSTORE_B64_SECRET" | tr -d '[:space:]' | base64 -d > debug.keystore
+          elif [ "${{ github.event.inputs.allow_ephemeral_keystore }}" = "true" ]; then
+            echo "WARNING: Generating ephemeral debug.keystore (APK will NOT update cleanly over other builds)."
+            keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keypass android -storepass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          else
+            echo "::error::Missing debug.keystore.base64 and GitHub Secret DEBUG_KEYSTORE_BASE64. Refusing to generate a random certificate that breaks APK upgrades. Upload debug.keystore.base64 to the repo or set DEBUG_KEYSTORE_BASE64 in GitHub Actions Secrets."
             exit 1
           fi
-          base64 -d debug.keystore.base64 > debug.keystore
 
       - name: Extract App Version
         id: app_version
