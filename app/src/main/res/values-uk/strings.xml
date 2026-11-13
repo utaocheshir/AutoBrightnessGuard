@@ -33,8 +33,8 @@
     <string name="pref_debounce_lock_desc">Обмежує StabilityProcess.getAccelerateScale() до 1.0x, щоб LuxQueueProcess не стискав таймери через мікродрижання рук.</string>
     <string name="pref_smart_dimming_title">Вимкнення App Smart Dimming</string>
     <string name="pref_smart_dimming_desc">Вимикає зниження яскравості для окремих додатків AppFossReduceConfig в OplusFeatureReduceBrightness (браузери, месенджери).</string>
-    <string name="pref_dual_sensor_title">Балансувальник 360° Aux-датчика</string>
-    <string name="pref_dual_sensor_desc">Згладжує стрибки заднього датчика в приміщенні (LuxEventResult.calculateAuxLux) замість різкого переходу на auxLux.</string>
+    <string name="pref_dual_sensor_title">Плавний 360° Aux-балансувальник</string>
+    <string name="pref_dual_sensor_desc">Плавно змішує та згладжує (EMA) показники тилового датчика в LuxEventResult.calculateAuxLux(), не вимикаючи реакцію на заднє світло.</string>
     <string name="pref_strict_alarm_title">Суворе правило Alarm</string>
     <string name="pref_strict_alarm_desc">Ігнорує назву лямбди та орієнтується виключно на стек викликів таймера AlarmManager.</string>
     <string name="pref_verbose_log_title">Розширене логування</string>
@@ -60,10 +60,15 @@
     <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() і (int) + resetAmbientAdapter\n2. Стабільність і гістерезис: AmbientAdapter + StabilityProcess\n3. Поріг і крива: Нічний/Ручний мінімум + DarkEnv + Live-крива</string>
     <string name="toast_applied_live">Застосовано на льоту без перезавантаження</string>
 
-    <string name="sensors_card_title">Датчики освітленості (Live)</string>
+    <string name="sensors_card_title">Яскравість і датчики світла</string>
     <string name="sensors_count_badge">%d датч.</string>
-    <string name="sensors_none_detected">Система не повідомила жодного апаратного датчика світла</string>
+    <string name="sensors_eco_badge">ECO • НА ЕКРАНІ</string>
+    <string name="sensors_none_detected">Система не повідомила жодного датчика освітленості</string>
     <string name="sensors_waiting">очікування…</string>
+    <string name="screen_brightness_now">Яскравість екрана</string>
+    <string name="sensor_btn_on">УВІМК</string>
+    <string name="sensor_btn_off">ВИМК</string>
+    <string name="sensor_off_badge">вимкнено</string>
 
     <string name="curve_editor_title">Графік кривої автояскравості</string>
     <string name="curve_editor_subtitle">Керування OplusDisplayBrightnessModel.getValueByCurve на льоту</string>
@@ -75,7 +80,7 @@
     <string name="unit_nits">ніт</string>
 
     <string name="pref_custom_floor_title">Ручний безумовний мінімум</string>
-    <string name="pref_custom_floor_desc">Коли нічний мінімум 8.5 ніт вимкнено: підсвітка НЕ опуститься нижче цього порогу за жодних умов (поки екран увімкнений).</string>
+    <string name="pref_custom_floor_desc">Коли нічний мінімум 8.5 ніт вимкнено: підсвітка НЕ опуститься нижче цього порогу (0–150 ніт) за жодних умов, поки екран увімкнений.</string>
     <string name="pref_custom_floor_off">Вимк (поріг прошивки)</string>
     <string name="pref_custom_floor_value">Поріг: %.1f ніт (безумовно)</string>
 

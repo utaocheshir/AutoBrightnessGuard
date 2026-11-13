@@ -68,7 +68,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private val CURVE_POINT_LABELS = listOf("0 lx", "5 lx", "25 lx", "100 lx", "500 lx", "2k lx", "10k lx")
-private val CURVE_POINT_MAX_NITS = listOf(80f, 120f, 220f, 380f, 650f, 1000f, 1400f)
+private val CURVE_POINT_MAX_NITS = listOf(250f, 350f, 600f, 1000f, 1600f, 2400f, 3200f)
 
 @Composable
 fun CurveEditorCard(

@@ -33,8 +33,8 @@
     <string name="pref_debounce_lock_desc">Caps StabilityProcess.getAccelerateScale() at 1.0x so LuxQueueProcess keeps full SceneConfig timers against hand tremor jitter.</string>
     <string name="pref_smart_dimming_title">Per-App Smart Dimming Bypass</string>
     <string name="pref_smart_dimming_desc">Disables AppFossReduceConfig app-specific dimming in OplusFeatureReduceBrightness (browsers, messengers, readers).</string>
-    <string name="pref_dual_sensor_title">Dual 360° Aux Sensor Balancer</string>
-    <string name="pref_dual_sensor_desc">Smooths sudden indoor rear-sensor reflections in LuxEventResult.calculateAuxLux() instead of snapping straight to auxLux.</string>
+    <string name="pref_dual_sensor_title">Dual 360° Aux Sensor Smoother</string>
+    <string name="pref_dual_sensor_desc">Smoothly blends and EMA-filters indoor rear-sensor changes in LuxEventResult.calculateAuxLux() instead of snapping abruptly or blocking rear light.</string>
     <string name="pref_strict_alarm_title">Strict Alarm Rule Only</string>
     <string name="pref_strict_alarm_desc">Bypasses lambda name matching and solely checks AlarmManager stack frames.</string>
     <string name="pref_verbose_log_title">Verbose Debug Logging</string>
@@ -60,10 +60,15 @@
     <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() &amp; (int) + resetAmbientAdapter\n2. Stability &amp; Hysteresis: OplusBrightnessAmbientAdapter + StabilityProcess\n3. Floor &amp; Curve: Night/Manual Floor + DarkEnv &amp; ReduceBrightness + Live Curve</string>
     <string name="toast_applied_live">Applied instantly without reboot</string>
 
-    <string name="sensors_card_title">Live Light Sensors</string>
+    <string name="sensors_card_title">Brightness &amp; Light Sensors</string>
     <string name="sensors_count_badge">%d sensors</string>
-    <string name="sensors_none_detected">No hardware light sensors reported by Android SensorManager</string>
+    <string name="sensors_eco_badge">LIVE • FOREGROUND</string>
+    <string name="sensors_none_detected">No hardware ambient light sensors reported by Android SensorManager</string>
     <string name="sensors_waiting">waiting…</string>
+    <string name="screen_brightness_now">Screen Brightness</string>
+    <string name="sensor_btn_on">ON</string>
+    <string name="sensor_btn_off">OFF</string>
+    <string name="sensor_off_badge">disabled</string>
 
     <string name="curve_editor_title">Custom Brightness Curve</string>
     <string name="curve_editor_subtitle">Live override for OplusDisplayBrightnessModel.getValueByCurve</string>
@@ -75,7 +80,7 @@
     <string name="unit_nits">nits</string>
 
     <string name="pref_custom_floor_title">Manual Unconditional Minimum Floor</string>
-    <string name="pref_custom_floor_desc">When Night Floor (8.5 nits) is OFF, backlight NEVER drops below this level in any mode or app while the screen is lit.</string>
+    <string name="pref_custom_floor_desc">When Night Floor (8.5 nits) is OFF, backlight NEVER drops below this level (0–150 nits) in any mode or app while the screen is lit.</string>
     <string name="pref_custom_floor_off">Off (ROM default)</string>
     <string name="pref_custom_floor_value">Minimum: %.1f nits (Unconditional)</string>
 

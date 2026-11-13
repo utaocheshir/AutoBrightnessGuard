@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AutoBrightnessModule extends XposedModule {
 
     public static final String TAG = "AutoBrightnessGuard";
-    public static final String VERSION = "1.4.1";
+    public static final String VERSION = "1.4.2";
 
     // Legacy toggles (SystemProperties)
     public static final String PROP_BLOCK_RESET = "persist.autobrightness.block_reset";
@@ -59,6 +59,8 @@ public class AutoBrightnessModule extends XposedModule {
     public static final String PROP_HYSTERESIS = "persist.autobrightness.hysteresis";
     public static final String PROP_DISABLE_SMART_DIMMING = "persist.autobrightness.disable_smart_dimming";
     public static final String PROP_DUAL_SENSOR_GUARD = "persist.autobrightness.dual_sensor_guard";
+    public static final String PROP_DISABLE_MAIN_SENSOR = "persist.autobrightness.disable_main_sensor";
+    public static final String PROP_DISABLE_AUX_SENSOR = "persist.autobrightness.disable_aux_sensor";
     public static final String PROP_CURVE_CONFIG = "persist.autobrightness.curve";
 
     // Verified Target Classes in oplus-services.jar
@@ -110,7 +112,16 @@ public class AutoBrightnessModule extends XposedModule {
     private final AtomicInteger widenedHysteresis = new AtomicInteger();
     private final AtomicInteger appliedCustomCurve = new AtomicInteger();
 
-    // Cached reflection handles
+    // Cached reflection handles (avoid repeated Class.forName in hot brightness paths)
+    private static volatile Method sSpGetBoolean;
+    private static volatile Method sSpGetString;
+
+    // Cached curve & aux smoothing state for zero-allocation hot path
+    private volatile String mLastRawCurve = "";
+    private volatile BrightnessMath.CurveConfig mCachedCurveConfig =
+            new BrightnessMath.CurveConfig(false, BrightnessMath.copyDefaults());
+    private volatile float mLastAuxEmaLux = Float.NaN;
+
     private volatile Method mLuxIsResetForceUpdate;
     private volatile Method mBuilderIsAutoMode;
     private volatile Method mBuilderGetAmbientLuxValid;
@@ -161,6 +172,14 @@ public class AutoBrightnessModule extends XposedModule {
     }
 
     private void initReflectionCaches(ClassLoader cl) {
+        try {
+            Class<?> sp = Class.forName("android.os.SystemProperties");
+            sSpGetBoolean = sp.getMethod("getBoolean", String.class, boolean.class);
+            sSpGetString = sp.getMethod("get", String.class, String.class);
+        } catch (Throwable t) {
+            note(Log.INFO, "SystemProperties cache skipped: " + t.getMessage());
+        }
+
         try {
             Class<?> luxResultCls = Class.forName(LUX_RESULT_CLASS, false, cl);
             mLuxIsResetForceUpdate = luxResultCls.getMethod("isResetForceUpdate");
@@ -573,7 +592,6 @@ public class AutoBrightnessModule extends XposedModule {
                         applyFloor = isAuto && luxValid && !isDragging;
                         targetFloor = NIGHT_MIN_FLOOR_NITS;
                     } else {
-                        // Manual floor applies unconditionally across auto, manual slider, and any app
                         applyFloor = true;
                         targetFloor = customFloor;
                     }
@@ -622,30 +640,47 @@ public class AutoBrightnessModule extends XposedModule {
     }
 
     /**
-     * 7. Dual 360° Aux Sensor Balancer: damps indoor auxLux > mainLux spikes in
-     * LuxEvent$LuxEventResult.calculateAuxLux(mainLux, auxLux).
+     * 7. Dual 360° Aux Sensor Balancer + Individual Sensor Disable Toggles:
+     * - If disable_aux_sensor is enabled: returns mainLux (ignores rear sensor).
+     * - If disable_main_sensor is enabled: returns auxLux (uses rear sensor directly).
+     * - Otherwise smooths indoor spikes with proportional blend + EMA (0.35 alpha) instead of cutting off rear response.
      */
     private final class DualSensorAuxHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!isPropertyEnabled(PROP_DUAL_SENSOR_GUARD, true)) {
+            boolean disableAux = isPropertyEnabled(PROP_DISABLE_AUX_SENSOR, false);
+            boolean disableMain = isPropertyEnabled(PROP_DISABLE_MAIN_SENSOR, false);
+            boolean dualGuard = isPropertyEnabled(PROP_DUAL_SENSOR_GUARD, true);
+
+            if (!disableAux && !disableMain && !dualGuard) {
+                mLastAuxEmaLux = Float.NaN;
                 return chain.proceed();
             }
 
             try {
                 float mainLux = (Float) chain.getArg(0);
                 float auxLux = (Float) chain.getArg(1);
-                if (!Float.isNaN(mainLux) && !Float.isNaN(auxLux)
+
+                if (disableAux && !disableMain && !Float.isNaN(mainLux) && mainLux >= 0f) {
+                    return mainLux;
+                }
+                if (disableMain && !disableAux && !Float.isNaN(auxLux) && auxLux >= 0f) {
+                    return auxLux;
+                }
+
+                if (dualGuard && !Float.isNaN(mainLux) && !Float.isNaN(auxLux)
                         && mainLux >= 0f && mainLux < MAX_AUX_INDOOR_LUX && auxLux > mainLux) {
-                    float smoothed = smoothIndoorAuxLux(mainLux, auxLux);
-                    if (smoothed < auxLux) {
-                        int n = smoothedAuxSensor.incrementAndGet();
-                        if (n == 1 || (n % 50 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
-                            note(Log.INFO, "GUARD dual-sensor damped auxLux (" + mainLux + ", " + auxLux + ") -> " + smoothed);
-                        }
+                    float blended = smoothIndoorAuxLux(mainLux, auxLux);
+                    float smoothed = BrightnessMath.stepAuxEma(mLastAuxEmaLux, blended, 0.35f);
+                    mLastAuxEmaLux = smoothed;
+
+                    int n = smoothedAuxSensor.incrementAndGet();
+                    if (n == 1 || (n % 50 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                        note(Log.INFO, "GUARD dual-sensor smoothed auxLux (" + mainLux + ", " + auxLux + ") -> " + smoothed);
                     }
                     return smoothed;
                 }
+                mLastAuxEmaLux = Float.isNaN(auxLux) ? mainLux : Math.max(mainLux, auxLux);
             } catch (Throwable ignored) { }
 
             return chain.proceed();
@@ -704,6 +739,7 @@ public class AutoBrightnessModule extends XposedModule {
     /**
      * 9. Live Custom Curve Override: evaluates user's 7-point lux->nit curve from
      * persist.autobrightness.curve inside OplusDisplayBrightnessModel.getValueByCurve("", lux).
+     * Uses cached CurveConfig so zero heap allocations occur unless the user modifies a slider.
      */
     private final class CustomCurveHook implements XposedInterface.Hooker {
         @Override
@@ -713,7 +749,11 @@ public class AutoBrightnessModule extends XposedModule {
                 String name = (arg0 instanceof String) ? (String) arg0 : null;
                 if (name != null && name.isEmpty()) {
                     String raw = getPropertyString(PROP_CURVE_CONFIG, "");
-                    BrightnessMath.CurveConfig cfg = BrightnessMath.parseCurveConfig(raw);
+                    if (!raw.equals(mLastRawCurve)) {
+                        mCachedCurveConfig = BrightnessMath.parseCurveConfig(raw);
+                        mLastRawCurve = raw;
+                    }
+                    BrightnessMath.CurveConfig cfg = mCachedCurveConfig;
                     if (cfg.enabled) {
                         float lux = (Float) chain.getArg(1);
                         float customNit = BrightnessMath.interpolatePiecewiseLogLux(
@@ -747,18 +787,26 @@ public class AutoBrightnessModule extends XposedModule {
 
     private static boolean isPropertyEnabled(String propKey, boolean defaultValue) {
         try {
-            Class<?> sp = Class.forName("android.os.SystemProperties");
-            Method getBoolean = sp.getMethod("getBoolean", String.class, boolean.class);
-            return (Boolean) getBoolean.invoke(null, propKey, defaultValue);
+            Method m = sSpGetBoolean;
+            if (m == null) {
+                Class<?> sp = Class.forName("android.os.SystemProperties");
+                m = sp.getMethod("getBoolean", String.class, boolean.class);
+                sSpGetBoolean = m;
+            }
+            return (Boolean) m.invoke(null, propKey, defaultValue);
         } catch (Throwable ignored) { }
         return defaultValue;
     }
 
     private static String getPropertyString(String propKey, String defaultValue) {
         try {
-            Class<?> sp = Class.forName("android.os.SystemProperties");
-            Method getStr = sp.getMethod("get", String.class, String.class);
-            Object res = getStr.invoke(null, propKey, defaultValue);
+            Method m = sSpGetString;
+            if (m == null) {
+                Class<?> sp = Class.forName("android.os.SystemProperties");
+                m = sp.getMethod("get", String.class, String.class);
+                sSpGetString = m;
+            }
+            Object res = m.invoke(null, propKey, defaultValue);
             return res != null ? res.toString() : defaultValue;
         } catch (Throwable ignored) { }
         return defaultValue;

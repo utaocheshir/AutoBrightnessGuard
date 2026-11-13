@@ -17,12 +17,12 @@ public final class BrightnessMath {
 
     public static final int CURVE_POINT_COUNT = 7;
     public static final float MIN_CURVE_NIT = 2.0f;
-    public static final float MAX_CURVE_NIT = 1600.0f;
-    public static final float MAX_CUSTOM_FLOOR_NIT = 80.0f;
+    public static final float MAX_CURVE_NIT = 3500.0f;
+    public static final float MAX_CUSTOM_FLOOR_NIT = 200.0f;
 
     /**
      * Canonical 7-point ambient lux breakpoints spanning dark room -> bright sunlight.
-     * Encodes into < 45 bytes in SystemProperties (well inside Android's 91-byte limit).
+     * Encodes into < 48 bytes in SystemProperties (well inside Android's 91-byte limit).
      */
     public static final float[] CURVE_ANCHOR_LUX = new float[] {
             0f, 5f, 25f, 100f, 500f, 2000f, 10000f
@@ -44,12 +44,32 @@ public final class BrightnessMath {
         }
     }
 
+    /**
+     * Smooths indoor auxLux > mainLux spikes via a proportional blend (60% toward auxLux)
+     * rather than crushing rear sensor input down to mainLux.
+     */
     public static float smoothIndoorAuxLux(float mainLux, float auxLux) {
         if (Float.isNaN(mainLux) || Float.isNaN(auxLux) || mainLux < 0f || auxLux <= mainLux) {
             return auxLux;
         }
-        float maxGain = mainLux * 0.35f + 5.0f;
-        return Math.min(auxLux, mainLux + maxGain);
+        if (mainLux >= MAX_AUX_INDOOR_LUX) {
+            return auxLux;
+        }
+        return mainLux + (auxLux - mainLux) * 0.60f;
+    }
+
+    /**
+     * Exponential Moving Average (EMA) step for smooth temporal transitions on dual sensor output.
+     */
+    public static float stepAuxEma(float prevSmoothedLux, float targetLux, float alpha) {
+        if (Float.isNaN(targetLux)) {
+            return prevSmoothedLux;
+        }
+        if (Float.isNaN(prevSmoothedLux) || prevSmoothedLux < 0f) {
+            return targetLux;
+        }
+        float a = clamp(alpha, 0.05f, 1.0f);
+        return prevSmoothedLux + a * (targetLux - prevSmoothedLux);
     }
 
     public static boolean shouldRaiseNitFloor(float nit, float floorNits) {

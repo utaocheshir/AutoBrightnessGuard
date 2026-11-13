@@ -581,7 +581,7 @@ private fun HeaderHero() {
                 color = Color(0xFFFFC107).copy(alpha = 0.2f)
             ) {
                 Text(
-                    text = "v1.4.1",
+                    text = "v1.4.2",
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
@@ -812,7 +812,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                                     }
                                     Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                                 },
-                                valueRange = 0f..40f,
+                                valueRange = 0f..150f,
                                 modifier = Modifier.testTag("slider_custom_min_nit")
                             )
                         }
@@ -1430,7 +1430,7 @@ fun ToolsTabContent(
                         }
                         null -> {
                             Text(
-                                text = "Текущая версия: v1.4.1",
+                                text = "Текущая версия: v1.4.2",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1575,7 +1575,7 @@ fun ToolsTabContent(
                             val comp = DeviceCompatibility.getCompatibilitySummary()
                             val report = buildString {
                                 appendLine("=== Auto Brightness Guard Diagnostic Report ===")
-                                appendLine("Module Version: 1.4.1 (LibXposed API 102)")
+                                appendLine("Module Version: 1.4.2 (LibXposed API 102)")
                                 appendLine("Device: ${comp.deviceModel}")
                                 appendLine("OS: ${comp.androidVersion}")
                                 appendLine("Fingerprint: ${comp.fingerprint}")
@@ -1810,7 +1810,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             FaqItem(
                 id = 3,
                 question = "Влияет ли модуль на расход батареи?",
-                answer = "Нет. Модуль не запускает фоновых служб или бесконечных циклов. Перехватчики срабатывают только в момент системных перерасчётов яркости или при срабатывании таймера выключения экрана внутри system_server.",
+                answer = "Нет. В версии 1.4.2 реализована полная энергоэффективность:\n• Приложение-компаньон регистрирует датчики освещённости и наблюдатель яркости строго при активном окне (ON_RESUME / ON_PAUSE) в режиме SENSOR_DELAY_NORMAL — в фоне или при выключенном экране потребление 0%.\n• Хуки в system_server не создают фоновых потоков, таймеров и вейклоков, кешируют Method-дескрипторы SystemProperties и распарсенную кривую без лишних аллокаций.",
                 isExpanded = expandedFaq == 3,
                 onToggle = { expandedFaq = if (expandedFaq == 3) null else 3 }
             )
@@ -1834,10 +1834,26 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Версия 1.4.1 (Текущая — Live Curve & Hysteresis)",
+                            text = "Версия 1.4.2 (Текущая — Eco, Live Brightness & Wide Range)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF10B981)
+                        )
+                        Text(
+                            text = "• Исправлен фильтр датчиков (исключён flight_detect / ToF / proximity) и добавлена живая строка текущей яркости экрана (% + raw).\n• Кнопки раздельного отключения/включения датчиков света (Основной / Aux) прямо на главном экране.\n• Диапазон ползунков ручной кривой увеличен в 2.5–3 раза (до 3200 нит), ручной ночной минимум расширен до 0–150 нит.\n• Балансировщик 360° Aux-датчика больше не глушит тыловой свет: плавное пропорциональное смешивание 60% + временное EMA-сглаживание.\n• Энергоэффективность (Eco): датчики и наблюдатель яркости работают строго пока приложение открыто на экране (ON_RESUME/ON_PAUSE), а в хуке system_server закеширована рефлексия и конфиг кривой.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Версия 1.4.1 (Live Curve & Hysteresis)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
                         )
                         Text(
                             text = "• Редактор кривой автояркости (график + 7 ползунков): прямой перехват OplusDisplayBrightnessModel.getValueByCurve(\"\", lux) на лету.\n• Анти-гиперчувствительность: расширение границ StabilityProcess.getLargeChangeLimit(float) от 1.0x до 3.0x против скачков от малейшего колебания света.\n• Безусловный ручной минимум яркости: при отключении авто-минимума 8.5 нит открывается ползунок ручного порога (ниже не опустится никогда при включённом экране).\n• Живые датчики света на главном экране + перевёрнутые логи (новые сверху) + компактный выбор языка внизу Настроек.",
@@ -1929,7 +1945,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.4.1\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
+                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.4.2\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
