@@ -60,6 +60,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -68,14 +70,15 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,6 +95,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.banoku.oplus.autobrightness.ui.CurveEditorCard
+import com.banoku.oplus.autobrightness.ui.LightSensorsCard
 import com.banoku.oplus.autobrightness.ui.theme.AutoBrightnessGuardTheme
 import com.banoku.oplus.autobrightness.util.DeviceCompatibility
 import com.banoku.oplus.autobrightness.util.GuardStats
@@ -103,6 +108,8 @@ import com.banoku.oplus.autobrightness.util.RootHelper
 import com.banoku.oplus.autobrightness.util.UpdateChecker
 import com.banoku.oplus.autobrightness.util.UpdateResult
 import kotlinx.coroutines.launch
+import java.util.Locale
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -224,6 +231,7 @@ fun OverviewTabContent(
 ) {
     val context = LocalContext.current
     var isIconHidden by remember { mutableStateOf(false) }
+    var primaryLux by remember { mutableStateOf<Float?>(null) }
     val compInfo = remember { DeviceCompatibility.getCompatibilitySummary() }
     val isRoot = remember { RootHelper.isRootAvailable() }
 
@@ -320,6 +328,16 @@ fun OverviewTabContent(
             item {
                 UpdateBannerCard(info = updateState.info)
             }
+        }
+
+        // Live Light Sensors Card
+        item {
+            LightSensorsCard(onPrimaryLuxChanged = { primaryLux = it })
+        }
+
+        // Interactive Auto-Brightness Curve Editor Card
+        item {
+            CurveEditorCard(liveLux = primaryLux)
         }
 
         item {
@@ -563,7 +581,7 @@ private fun HeaderHero() {
                 color = Color(0xFFFFC107).copy(alpha = 0.2f)
             ) {
                 Text(
-                    text = "v1.4.0",
+                    text = "v1.4.1",
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
@@ -602,15 +620,20 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
     var strictAlarm by remember { mutableStateOf(prefs.getBoolean("pref_strict_alarm", false)) }
     var verboseLog by remember { mutableStateOf(prefs.getBoolean("pref_verbose_log", false)) }
 
-    // ColorOS 17 / OxygenOS 17 verified toggles
+    // ColorOS 17 / OxygenOS 17 verified toggles & sliders
     var stabilityGuard by remember { mutableStateOf(prefs.getBoolean("pref_stability_guard", true)) }
     var minFloor by remember { mutableStateOf(prefs.getBoolean("pref_min_floor", true)) }
+    var customMinNit by remember { mutableFloatStateOf(prefs.getFloat("pref_custom_min_nit", 12.0f)) }
     var debounceLock by remember { mutableStateOf(prefs.getBoolean("pref_debounce_lock", true)) }
+    var hysteresisScale by remember {
+        mutableFloatStateOf(prefs.getFloat("pref_hysteresis_scale", BrightnessMath.DEFAULT_HYSTERESIS_SCALE))
+    }
     var disableSmartDimming by remember { mutableStateOf(prefs.getBoolean("pref_disable_smart_dimming", true)) }
     var dualSensorGuard by remember { mutableStateOf(prefs.getBoolean("pref_dual_sensor_guard", true)) }
 
     val toastApplied = stringResource(R.string.toast_applied_live)
     var currentLang by remember { mutableStateOf(LocaleHelper.getSelectedLanguage(context)) }
+    var langMenuExpanded by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -633,61 +656,6 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             )
         }
 
-        // Language Selection Card
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Language,
-                            contentDescription = null,
-                            tint = Color(0xFFFFC107)
-                        )
-                        Text(
-                            text = stringResource(R.string.pref_language_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Text(
-                        text = stringResource(R.string.pref_language_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                    LanguageRadioOption("system", stringResource(R.string.lang_system), currentLang) {
-                        currentLang = it
-                        LocaleHelper.setAppLocale(context, it)
-                    }
-                    LanguageRadioOption("ru", stringResource(R.string.lang_ru), currentLang) {
-                        currentLang = it
-                        LocaleHelper.setAppLocale(context, it)
-                    }
-                    LanguageRadioOption("en", stringResource(R.string.lang_en), currentLang) {
-                        currentLang = it
-                        LocaleHelper.setAppLocale(context, it)
-                    }
-                    LanguageRadioOption("uk", stringResource(R.string.lang_uk), currentLang) {
-                        currentLang = it
-                        LocaleHelper.setAppLocale(context, it)
-                    }
-                }
-            }
-        }
-
         item {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_block_reset_title),
@@ -699,7 +667,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                     scope.launch {
                         RootHelper.setSystemProperty(AutoBrightnessModule.PROP_BLOCK_RESET, newState)
                     }
-                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -715,7 +683,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                     scope.launch {
                         RootHelper.setSystemProperty(AutoBrightnessModule.PROP_BLOCK_AMBIENT, newState)
                     }
-                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -731,7 +699,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                     scope.launch {
                         RootHelper.setSystemProperty(AutoBrightnessModule.PROP_STRICT_ALARM, newState)
                     }
-                    Toast.makeText(context, "Применено на лету без перезагрузки", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -753,21 +721,154 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             )
         }
 
+        // Interactive Night Minimum Toggle + Unconditional Manual Minimum Slider when OFF
         item {
-            SettingSwitchCard(
-                title = stringResource(R.string.pref_min_floor_title),
-                desc = stringResource(R.string.pref_min_floor_desc),
-                checked = minFloor,
-                testTag = "switch_min_floor",
-                onCheckedChange = { newState ->
-                    minFloor = newState
-                    prefs.edit().putBoolean("pref_min_floor", newState).apply()
-                    scope.launch {
-                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, newState)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.pref_min_floor_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(R.string.pref_min_floor_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Switch(
+                            checked = minFloor,
+                            onCheckedChange = { newState ->
+                                minFloor = newState
+                                prefs.edit().putBoolean("pref_min_floor", newState).apply()
+                                scope.launch {
+                                    RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, newState)
+                                    val customStr = if (!newState) {
+                                        String.format(Locale.US, "%.1f", customMinNit)
+                                    } else {
+                                        "0"
+                                    }
+                                    RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, customStr)
+                                }
+                                Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.testTag("switch_min_floor")
+                        )
                     }
-                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+
+                    AnimatedVisibility(visible = !minFloor) {
+                        Column(
+                            modifier = Modifier.padding(top = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = stringResource(R.string.pref_custom_floor_title),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFFC107)
+                            )
+                            Text(
+                                text = stringResource(R.string.pref_custom_floor_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+                            )
+                            Text(
+                                text = if (customMinNit < 0.5f) {
+                                    stringResource(R.string.pref_custom_floor_off)
+                                } else {
+                                    String.format(stringResource(R.string.pref_custom_floor_value), customMinNit)
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = if (customMinNit < 0.5f) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF34D399)
+                            )
+                            Slider(
+                                value = customMinNit,
+                                onValueChange = { rawVal ->
+                                    customMinNit = (rawVal * 2f).roundToInt() / 2f
+                                },
+                                onValueChangeFinished = {
+                                    prefs.edit().putFloat("pref_custom_min_nit", customMinNit).apply()
+                                    val propVal = if (customMinNit < 0.5f) "0" else String.format(Locale.US, "%.1f", customMinNit)
+                                    scope.launch {
+                                        RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, propVal)
+                                    }
+                                    Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                                },
+                                valueRange = 0f..40f,
+                                modifier = Modifier.testTag("slider_custom_min_nit")
+                            )
+                        }
+                    }
                 }
-            )
+            }
+        }
+
+        // Hysteresis Dead-Zone Widening Slider (Anti-Hypersensitivity)
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.pref_hysteresis_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = stringResource(R.string.pref_hysteresis_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    )
+                    Text(
+                        text = String.format(stringResource(R.string.pref_hysteresis_value), hysteresisScale),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF38BDF8)
+                    )
+                    Slider(
+                        value = hysteresisScale,
+                        onValueChange = { rawVal ->
+                            hysteresisScale = (rawVal * 10f).roundToInt() / 10f
+                        },
+                        onValueChangeFinished = {
+                            prefs.edit().putFloat("pref_hysteresis_scale", hysteresisScale).apply()
+                            scope.launch {
+                                RootHelper.setSystemPropertyString(
+                                    AutoBrightnessModule.PROP_HYSTERESIS,
+                                    String.format(Locale.US, "%.1f", hysteresisScale)
+                                )
+                            }
+                            Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                        },
+                        valueRange = BrightnessMath.MIN_HYSTERESIS_SCALE..BrightnessMath.MAX_HYSTERESIS_SCALE,
+                        modifier = Modifier.testTag("slider_hysteresis")
+                    )
+                }
+            }
         }
 
         item {
@@ -862,34 +963,109 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                 }
             }
         }
-    }
-}
 
-@Composable
-fun LanguageRadioOption(
-    tag: String,
-    label: String,
-    selectedTag: String,
-    onSelect: (String) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable { onSelect(tag) }
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(
-            selected = selectedTag == tag,
-            onClick = { onSelect(tag) }
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (selectedTag == tag) FontWeight.Bold else FontWeight.Normal
-        )
+        // Compact App Language Dropdown at bottom of Settings
+        item {
+            val langOptions = listOf(
+                "system" to stringResource(R.string.lang_system),
+                "ru" to stringResource(R.string.lang_ru),
+                "en" to stringResource(R.string.lang_en),
+                "uk" to stringResource(R.string.lang_uk)
+            )
+            val currentLabel = langOptions.firstOrNull { it.first == currentLang }?.second
+                ?: stringResource(R.string.lang_system)
+
+            Card(
+                modifier = Modifier.fillMaxWidth().testTag("language_dropdown_card"),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { langMenuExpanded = true }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Language,
+                            contentDescription = null,
+                            tint = Color(0xFFFFC107),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column {
+                            Text(
+                                text = stringResource(R.string.pref_language_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = stringResource(R.string.pref_language_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                            )
+                        }
+                    }
+
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { langMenuExpanded = true }
+                                .testTag("language_dropdown_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = currentLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = langMenuExpanded,
+                            onDismissRequest = { langMenuExpanded = false }
+                        ) {
+                            langOptions.forEach { (tag, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = label,
+                                            fontWeight = if (tag == currentLang) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        langMenuExpanded = false
+                                        currentLang = tag
+                                        LocaleHelper.setAppLocale(context, tag)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1254,7 +1430,7 @@ fun ToolsTabContent(
                         }
                         null -> {
                             Text(
-                                text = "Текущая версия: v1.4.0",
+                                text = "Текущая версия: v1.4.1",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1399,7 +1575,7 @@ fun ToolsTabContent(
                             val comp = DeviceCompatibility.getCompatibilitySummary()
                             val report = buildString {
                                 appendLine("=== Auto Brightness Guard Diagnostic Report ===")
-                                appendLine("Module Version: 1.4.0 (LibXposed API 102)")
+                                appendLine("Module Version: 1.4.1 (LibXposed API 102)")
                                 appendLine("Device: ${comp.deviceModel}")
                                 appendLine("OS: ${comp.androidVersion}")
                                 appendLine("Fingerprint: ${comp.fingerprint}")
@@ -1658,10 +1834,26 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Версия 1.4.0 (Текущая — Verified ColorOS 17)",
+                            text = "Версия 1.4.1 (Текущая — Live Curve & Hysteresis)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF10B981)
+                        )
+                        Text(
+                            text = "• Редактор кривой автояркости (график + 7 ползунков): прямой перехват OplusDisplayBrightnessModel.getValueByCurve(\"\", lux) на лету.\n• Анти-гиперчувствительность: расширение границ StabilityProcess.getLargeChangeLimit(float) от 1.0x до 3.0x против скачков от малейшего колебания света.\n• Безусловный ручной минимум яркости: при отключении авто-минимума 8.5 нит открывается ползунок ручного порога (ниже не опустится никогда при включённом экране).\n• Живые датчики света на главном экране + перевёрнутые логи (новые сверху) + компактный выбор языка внизу Настроек.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Версия 1.4.0 (Verified ColorOS 17)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
                         )
                         Text(
                             text = "• Перехват resetAutoBrightness() и resetAutoBrightness(int) для совместимости с ColorOS 17 DragOpt.\n• Анти-дрейф в покое: подавление handleStableForceChange / handleSmallChangeAnimating.\n• Стабилизатор задержки: фиксация StabilityProcess.getAccelerateScale <= 1.0x.\n• Ночной минимум 8.5 нит в convertNitToBrightness + пропуск 20-мин затемнения DarkEnv.\n• Отмена поприложенческого затемнения OplusFeatureReduceBrightness (AppFossReduceConfig).\n• Сглаживание 360° Aux-датчика в помещении (LuxEventResult.calculateAuxLux).",
@@ -1737,7 +1929,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.4.0\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
+                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.4.1\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

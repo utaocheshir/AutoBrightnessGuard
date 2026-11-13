@@ -55,3 +55,14 @@
    - **`calculateAuxLux(float mainLux, float auxLux): float`**
    - В диапазоне помещений (`mainLux <= MAIN_LUX_AREAS_FOR_AUX[last]`), если `auxLux > mainLux`, штатный код **возвращает `auxLux` напрямую**, игнорируя показания основного фронтального датчика. Любой отсвет монитора/лампы на задний датчик вызывает скачок яркости.
    - Сглаживание усиления `min(auxLux, mainLux + (mainLux * 0.35f + 5.0f))` при `mainLux < 200f && auxLux > mainLux` устраняет резкие скачки от тылового датчика в помещении.
+4. **`StabilityProcess.getLargeChangeLimit(float targetLux): OplusPair` и `getSmallChangeLimit(OplusPair, float)`**
+   - В `StabilityProcess.updateRangeStrategy(OplusLuxResult)` вычисляются верхняя и нижняя границы мёртвой зоны (`mMainLargeRangePair = getLargeChangeLimit(mCurrentAutomaticLux)`), от которых затем производно вычисляется `mMainSmallRangePair`.
+   - При штатной ширине границ мелкое колебание света выводит `weightLux` за пределы пары и запускает `REASON.LargeChange` (очередную анимацию яркости). Расширение интервала `[targetLux - left, right - targetLux]` коэффициентом `1.0x–3.0x` (с сохранением отрицательного маркера `-1.0f` слева в глубокой темноте) эффективно снижает гиперчувствительность.
+
+### 2.4. Механизм построения и оценки кривой автояркости (`OplusDisplayBrightnessModel` / `OplusSpline`)
+- **Классы:**
+  - `com.android.server.display.model.OplusDisplayBrightnessModel`
+  - `com.android.server.display.model.OplusDisplaySplineManager` (хранит сплайны `"default"`, `"drags"`, `"nits"`, `"backlights"`)
+  - `com.android.server.display.model.OplusSpline` (монотонный кубический сплайн `getX() -> float[] lux`, `getY() -> float[] nits`, `interpolate(float lux) -> float nit`).
+- **Точка вычисления при обновлении света:** `OplusAutomaticBrightnessController.lambda$onLuxResultChange$3` вызывает `mBrightnessModel.getValueByCurve("", lux)` для получения целевых нит, а затем `getValueByCurve("nits", nit)` для перевода нит в аппаратную яркость.
+- **Управление в реальном времени:** перехват `OplusDisplayBrightnessModel.getValueByCurve(String name, float key)` при `name.isEmpty()` позволяет подменять вычисленную яркость пользовательским 7-точечным лог-сплайном из `persist.autobrightness.curve` (`< 45` байт, формат `"1:n0,n1,n2,n3,n4,n5,n6"`), полностью управляемым с графика в приложении без перезагрузки.

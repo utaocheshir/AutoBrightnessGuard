@@ -57,6 +57,29 @@
     <string name="stats_no_events">Очікування 10+ хвилин сну екрана</string>
     <string name="system_properties_hint">Налаштування застосовуються миттєво на льоту через SystemProperties без перезавантаження</string>
     <string name="engine_summary_title">Перевірений рушій перехоплення (ColorOS 12–17 / OxygenOS)</string>
-    <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() і (int) + resetAmbientAdapter\n2. Anti-Drift &amp; Debounce: OplusBrightnessAmbientAdapter + StabilityProcess\n3. Floor 8.5 nit + DarkEnv &amp; ReduceBrightness bypass + AuxLux balancer</string>
+    <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() і (int) + resetAmbientAdapter\n2. Стабільність і гістерезис: AmbientAdapter + StabilityProcess\n3. Поріг і крива: Нічний/Ручний мінімум + DarkEnv + Live-крива</string>
     <string name="toast_applied_live">Застосовано на льоту без перезавантаження</string>
+
+    <string name="sensors_card_title">Датчики освітленості (Live)</string>
+    <string name="sensors_count_badge">%d датч.</string>
+    <string name="sensors_none_detected">Система не повідомила жодного апаратного датчика світла</string>
+    <string name="sensors_waiting">очікування…</string>
+
+    <string name="curve_editor_title">Графік кривої автояскравості</string>
+    <string name="curve_editor_subtitle">Керування OplusDisplayBrightnessModel.getValueByCurve на льоту</string>
+    <string name="curve_badge_active">ВЛАСНА КРИВА</string>
+    <string name="curve_badge_stock">ШТАТНА КРИВА</string>
+    <string name="curve_show_all_sliders">Усі 7 точок (повзунки)</string>
+    <string name="curve_hide_all_sliders">Згорнути точки</string>
+    <string name="curve_reset">Скинути</string>
+    <string name="unit_nits">ніт</string>
+
+    <string name="pref_custom_floor_title">Ручний безумовний мінімум</string>
+    <string name="pref_custom_floor_desc">Коли нічний мінімум 8.5 ніт вимкнено: підсвітка НЕ опуститься нижче цього порогу за жодних умов (поки екран увімкнений).</string>
+    <string name="pref_custom_floor_off">Вимк (поріг прошивки)</string>
+    <string name="pref_custom_floor_value">Поріг: %.1f ніт (безумовно)</string>
+
+    <string name="pref_hysteresis_title">Поріг нечутливості світла (гістерезис)</string>
+    <string name="pref_hysteresis_desc">Розширює мертву зону у StabilityProcess.getLargeChangeLimit(), щоб дрібні коливання світла не смикали яскравість.</string>
+    <string name="pref_hysteresis_value">Мертва зона: %.1fx</string>
 </resources>

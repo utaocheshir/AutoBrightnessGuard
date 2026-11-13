@@ -57,6 +57,29 @@
     <string name="stats_no_events">Ожидание 10+ минут с выключенным экраном</string>
     <string name="system_properties_hint">Настройки применяются мгновенно на лету через SystemProperties без перезагрузки</string>
     <string name="engine_summary_title">Проверенный движок перехвата (ColorOS 12–17 / OxygenOS)</string>
-    <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() и (int) + resetAmbientAdapter\n2. Anti-Drift &amp; Debounce: OplusBrightnessAmbientAdapter + StabilityProcess\n3. Floor 8.5 nit + DarkEnv &amp; ReduceBrightness bypass + AuxLux balancer</string>
+    <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() и (int) + resetAmbientAdapter\n2. Стабильность и гистерезис: AmbientAdapter + StabilityProcess\n3. Порог и кривая: Ночной/Ручной минимум + DarkEnv + Live-кривая</string>
     <string name="toast_applied_live">Применено на лету без перезагрузки</string>
+
+    <string name="sensors_card_title">Датчики освещённости (Live)</string>
+    <string name="sensors_count_badge">%d датч.</string>
+    <string name="sensors_none_detected">Система не сообщила ни одного аппаратного датчика света</string>
+    <string name="sensors_waiting">ожидание…</string>
+
+    <string name="curve_editor_title">График кривой автояркости</string>
+    <string name="curve_editor_subtitle">Управление OplusDisplayBrightnessModel.getValueByCurve на лету</string>
+    <string name="curve_badge_active">СВОЯ КРИВАЯ</string>
+    <string name="curve_badge_stock">ШТАТНАЯ КРИВАЯ</string>
+    <string name="curve_show_all_sliders">Все 7 точек (ползунки)</string>
+    <string name="curve_hide_all_sliders">Свернуть точки</string>
+    <string name="curve_reset">Сброс</string>
+    <string name="unit_nits">нит</string>
+
+    <string name="pref_custom_floor_title">Ручной безусловный минимум</string>
+    <string name="pref_custom_floor_desc">Когда ночной минимум 8.5 нит выключен: подсветка НЕ опустится ниже этого порога ни при каких условиях (пока экран включён).</string>
+    <string name="pref_custom_floor_off">Выкл (порог прошивки)</string>
+    <string name="pref_custom_floor_value">Порог: %.1f нит (безусловно)</string>
+
+    <string name="pref_hysteresis_title">Порог нечувствительности света (гистерезис)</string>
+    <string name="pref_hysteresis_desc">Расширяет мёртвую зону в StabilityProcess.getLargeChangeLimit(), чтобы мелкие колебания света не дёргали яркость.</string>
+    <string name="pref_hysteresis_value">Мёртвая зона: %.1fx</string>
 </resources>

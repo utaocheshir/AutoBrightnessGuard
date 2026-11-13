@@ -108,30 +108,41 @@ object RootHelper {
         return res.success
     }
 
+    suspend fun setSystemPropertyString(key: String, value: String): Boolean {
+        val safeVal = value.replace("'", "'\\''")
+        val res = executeSuCommand("setprop $key '$safeVal'")
+        return res.success
+    }
+
+    suspend fun getSystemPropertyString(key: String, defaultValue: String = ""): String {
+        val res = executeSuCommand("getprop $key")
+        return if (res.success && res.output.isNotBlank()) res.output.trim() else defaultValue
+    }
+
     suspend fun readModuleLogs(): List<LogEntry> = withContext(Dispatchers.IO) {
         // 1. Try reading the most recent LSPosed module log file directly (/data/adb/lspd/log/modules_*.log)
-        val lspCmd = "cat \$(ls -t /data/adb/lspd/log/modules_*.log 2>/dev/null | head -n 1) 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 100"
+        val lspCmd = "cat \$(ls -t /data/adb/lspd/log/modules_*.log 2>/dev/null | head -n 1) 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 120"
         var result = executeSuCommand(lspCmd)
         if (result.success && result.output.isNotBlank()) {
-            return@withContext parseLogs(result.output)
+            return@withContext parseLogs(result.output).reversed()
         }
 
         // 2. Try wildcard LSPosed log files
-        result = executeSuCommand("cat /data/adb/lspd/log/modules*.log 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 100")
+        result = executeSuCommand("cat /data/adb/lspd/log/modules*.log 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 120")
         if (result.success && result.output.isNotBlank()) {
-            return@withContext parseLogs(result.output)
+            return@withContext parseLogs(result.output).reversed()
         }
 
         // 3. Try logcat across all buffers (-b all includes system buffer where system_server lives)
-        result = executeSuCommand("logcat -d -b all -s AutoBrightnessGuard:V | tail -n 100")
+        result = executeSuCommand("logcat -d -b all -s AutoBrightnessGuard:V | tail -n 120")
         if (result.success && result.output.isNotBlank()) {
-            return@withContext parseLogs(result.output)
+            return@withContext parseLogs(result.output).reversed()
         }
 
         // 4. Try logcat grep across all buffers
-        result = executeSuCommand("logcat -d -b all | grep -i AutoBrightnessGuard | tail -n 100")
+        result = executeSuCommand("logcat -d -b all | grep -i AutoBrightnessGuard | tail -n 120")
         if (result.success && result.output.isNotBlank()) {
-            return@withContext parseLogs(result.output)
+            return@withContext parseLogs(result.output).reversed()
         }
 
         emptyList()
@@ -142,22 +153,22 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:10",
-                message = "v1.4.0 (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
+                message = "v1.4.1 (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [1/7] controller resetAutoBrightness installed (variants=2, lambda=true)"
+                message = "Hook [1/9] controller resetAutoBrightness installed (variants=2, lambda=true)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [2/7] ambient resetAmbientAdapter(String) installed"
+                message = "Hook [8/9] StabilityProcess hysteresis widener installed (targets=2)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [5b/7] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (8.5 nits) installed"
+                message = "Hook [9/9] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed"
             ),
             LogEntry(
                 type = LogType.BLOCKED,
@@ -172,24 +183,25 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:15:03",
-                message = "GUARD night floor clamped 2.4 -> 8.5 nits (#1)"
+                message = "GUARD hysteresis (1.8x) at 45.0 lx: [34.0..58.0] -> [23.2..72.4]"
             ),
             LogEntry(
                 type = LogType.PASS,
                 time = "23:14:01",
                 message = "passed resetAutoBrightness #1 from VMStack.getThreadStackTrace"
             )
-        )
+        ).reversed()
     }
 
     fun computeStats(logs: List<LogEntry>): GuardStats {
         val blockedLogs = logs.filter { it.type == LogType.BLOCKED }
         val count = blockedLogs.size
-        val last = blockedLogs.lastOrNull()
+        // Logs are ordered newest-first, so the first BLOCKED item is the most recent.
+        val latest = blockedLogs.firstOrNull()
         return GuardStats(
             totalBlocked = count,
-            lastBlockedTime = last?.time ?: "",
-            lastBlockedMessage = last?.message ?: ""
+            lastBlockedTime = latest?.time ?: "",
+            lastBlockedMessage = latest?.message ?: ""
         )
     }
 

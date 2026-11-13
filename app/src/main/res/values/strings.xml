@@ -57,6 +57,29 @@
     <string name="stats_no_events">Waiting for screen-off &gt;10 min event</string>
     <string name="system_properties_hint">Settings apply instantly in real time via SystemProperties without reboot</string>
     <string name="engine_summary_title">Verified Hook Engine (ColorOS 12–17 / OxygenOS)</string>
-    <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() &amp; (int) + resetAmbientAdapter\n2. Anti-Drift &amp; Debounce: OplusBrightnessAmbientAdapter + StabilityProcess\n3. Night Floor (8.5 nit) + DarkEnv &amp; ReduceBrightness bypass + AuxLux balancer</string>
+    <string name="engine_summary_body">1. Reset Guard: resetAutoBrightness() &amp; (int) + resetAmbientAdapter\n2. Stability &amp; Hysteresis: OplusBrightnessAmbientAdapter + StabilityProcess\n3. Floor &amp; Curve: Night/Manual Floor + DarkEnv &amp; ReduceBrightness + Live Curve</string>
     <string name="toast_applied_live">Applied instantly without reboot</string>
+
+    <string name="sensors_card_title">Live Light Sensors</string>
+    <string name="sensors_count_badge">%d sensors</string>
+    <string name="sensors_none_detected">No hardware light sensors reported by Android SensorManager</string>
+    <string name="sensors_waiting">waiting…</string>
+
+    <string name="curve_editor_title">Custom Brightness Curve</string>
+    <string name="curve_editor_subtitle">Live override for OplusDisplayBrightnessModel.getValueByCurve</string>
+    <string name="curve_badge_active">CUSTOM CURVE LIVE</string>
+    <string name="curve_badge_stock">STOCK ROM CURVE</string>
+    <string name="curve_show_all_sliders">All 7 Lux Points</string>
+    <string name="curve_hide_all_sliders">Collapse Points</string>
+    <string name="curve_reset">Reset</string>
+    <string name="unit_nits">nits</string>
+
+    <string name="pref_custom_floor_title">Manual Unconditional Minimum Floor</string>
+    <string name="pref_custom_floor_desc">When Night Floor (8.5 nits) is OFF, backlight NEVER drops below this level in any mode or app while the screen is lit.</string>
+    <string name="pref_custom_floor_off">Off (ROM default)</string>
+    <string name="pref_custom_floor_value">Minimum: %.1f nits (Unconditional)</string>
+
+    <string name="pref_hysteresis_title">Ambient Lux Hysteresis Damping</string>
+    <string name="pref_hysteresis_desc">Widens StabilityProcess.getLargeChangeLimit() dead-zone bounds so minor room light changes do not pump brightness.</string>
+    <string name="pref_hysteresis_value">Dead-zone scale: %.1fx</string>
 </resources>

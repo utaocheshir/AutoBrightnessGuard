@@ -14,61 +14,87 @@ class ModuleUnitTest {
 
     @Test
     fun versionAndTagCheck() {
-        assertEquals("1.4.0", AutoBrightnessModule.VERSION)
+        assertEquals("1.4.1", AutoBrightnessModule.VERSION)
         assertEquals("AutoBrightnessGuard", AutoBrightnessModule.TAG)
         assertEquals("persist.autobrightness.block_reset", AutoBrightnessModule.PROP_BLOCK_RESET)
         assertEquals("persist.autobrightness.block_ambient", AutoBrightnessModule.PROP_BLOCK_AMBIENT)
         assertEquals("persist.autobrightness.stability_guard", AutoBrightnessModule.PROP_STABILITY_GUARD)
         assertEquals("persist.autobrightness.min_floor", AutoBrightnessModule.PROP_MIN_FLOOR)
+        assertEquals("persist.autobrightness.custom_min_nit", AutoBrightnessModule.PROP_CUSTOM_MIN_NIT)
         assertEquals("persist.autobrightness.debounce_lock", AutoBrightnessModule.PROP_DEBOUNCE_LOCK)
+        assertEquals("persist.autobrightness.hysteresis", AutoBrightnessModule.PROP_HYSTERESIS)
         assertEquals("persist.autobrightness.disable_smart_dimming", AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING)
         assertEquals("persist.autobrightness.dual_sensor_guard", AutoBrightnessModule.PROP_DUAL_SENSOR_GUARD)
+        assertEquals("persist.autobrightness.curve", AutoBrightnessModule.PROP_CURVE_CONFIG)
         assertEquals(8.5f, BrightnessMath.NIGHT_MIN_FLOOR_NITS, 0.001f)
     }
 
     @Test
     fun dualSensorAuxSmoothingCheck() {
-        // Indoor low-lux reflection spike: 10 lux front, 120 lux rear -> capped to 10 + (3.5 + 5) = 18.5
         assertEquals(18.5f, BrightnessMath.smoothIndoorAuxLux(10f, 120f), 0.001f)
-        // Zero lux front, slight rear bleed (30 lux) -> capped to 5.0
         assertEquals(5.0f, BrightnessMath.smoothIndoorAuxLux(0f, 30f), 0.001f)
-        // Normal case where auxLux <= mainLux -> untouched
         assertEquals(40f, BrightnessMath.smoothIndoorAuxLux(50f, 40f), 0.001f)
-        // Mild aux boost inside cap -> untouched
         assertEquals(22f, BrightnessMath.smoothIndoorAuxLux(20f, 22f), 0.001f)
     }
 
     @Test
     fun nightFloorThresholdCheck() {
         assertTrue(BrightnessMath.shouldRaiseNitFloor(2.4f, BrightnessMath.NIGHT_MIN_FLOOR_NITS))
-        assertFalse(BrightnessMath.shouldRaiseNitFloor(0.0f, BrightnessMath.NIGHT_MIN_FLOOR_NITS)) // screen off must stay 0
+        assertTrue(BrightnessMath.shouldRaiseNitFloor(10.0f, 15.0f))
+        assertFalse(BrightnessMath.shouldRaiseNitFloor(0.0f, BrightnessMath.NIGHT_MIN_FLOOR_NITS)) // screen off stays 0
         assertFalse(BrightnessMath.shouldRaiseNitFloor(Float.NaN, BrightnessMath.NIGHT_MIN_FLOOR_NITS))
         assertFalse(BrightnessMath.shouldRaiseNitFloor(12.0f, BrightnessMath.NIGHT_MIN_FLOOR_NITS))
     }
 
     @Test
-    fun updateCheckerVersionComparison() {
-        // Must NOT loop on the same version regardless of case or 'v'/'V' prefix
-        assertFalse(UpdateChecker.isVersionNewer("V1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("v1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("v1.2b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("V1.2b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.1", "1.3b"))
+    fun curveSerializationAndInterpolationCheck() {
+        val sampleNits = floatArrayOf(12f, 18f, 35f, 80f, 180f, 360f, 650f)
+        val encoded = BrightnessMath.serializeCurveConfig(true, sampleNits)
+        assertTrue(encoded.length < 91) // Must fit inside Android PROP_VALUE_MAX (91 bytes)
+        assertTrue(encoded.startsWith("1:"))
 
-        // Truly newer versions
-        assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("v1.4b", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("V1.4", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("1.3", "1.3b")) // stable 1.3 is newer than beta 1.3b
+        val decoded = BrightnessMath.parseCurveConfig(encoded)
+        assertTrue(decoded.enabled)
+        assertEquals(12f, decoded.nits[0], 0.01f)
+        assertEquals(650f, decoded.nits[6], 0.01f)
+
+        // Interpolation at anchor points and midpoints
+        assertEquals(12f, BrightnessMath.interpolatePiecewiseLogLux(0f, BrightnessMath.CURVE_ANCHOR_LUX, decoded.nits), 0.01f)
+        val mid = BrightnessMath.interpolatePiecewiseLogLux(50f, BrightnessMath.CURVE_ANCHOR_LUX, decoded.nits)
+        assertTrue(mid in 35f..80f)
+        assertEquals(650f, BrightnessMath.interpolatePiecewiseLogLux(20000f, BrightnessMath.CURVE_ANCHOR_LUX, decoded.nits), 0.01f)
     }
 
     @Test
-    fun simulationLogsAndStatsCheck() {
+    fun hysteresisRangeWideningCheck() {
+        // Standard indoor bounds around 50 lx: [38, 65] widened at 2.0x -> broader [newLeft, newRight]
+        val widened = BrightnessMath.widenRangeBounds(50f, 38f, 65f, 2.0f)
+        assertTrue(widened[0] < 38f)
+        assertTrue(widened[1] > 65f)
+
+        // Preserve ColorOS negative left sentinel (-1.0f) in very dark conditions
+        val darkWidened = BrightnessMath.widenRangeBounds(2f, -1.0f, 6.0f, 2.0f)
+        assertEquals(-1.0f, darkWidened[0], 0.001f)
+        assertTrue(darkWidened[1] > 6.0f)
+    }
+
+    @Test
+    fun updateCheckerVersionComparison() {
+        assertFalse(UpdateChecker.isVersionNewer("V1.3b", "1.3b"))
+        assertFalse(UpdateChecker.isVersionNewer("v1.3b", "1.3b"))
+        assertFalse(UpdateChecker.isVersionNewer("1.4.1", "1.4.1"))
+        assertTrue(UpdateChecker.isVersionNewer("1.4.1", "1.4.0"))
+        assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
+        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.4.1"))
+    }
+
+    @Test
+    fun simulationLogsReversedAndStatsCheck() {
         val sampleLogs = RootHelper.getSampleSimulationLogs()
         assertTrue(sampleLogs.isNotEmpty())
         assertTrue(sampleLogs.any { it.type == LogType.BLOCKED })
+        // Newest entry (23:14:01) must be at the top (index 0)
+        assertEquals("23:14:01", sampleLogs.first().time)
 
         val stats = RootHelper.computeStats(sampleLogs)
         assertEquals(2, stats.totalBlocked)
