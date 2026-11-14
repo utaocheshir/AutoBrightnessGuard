@@ -153,62 +153,67 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:10",
-                message = "v1.4.3 (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
+                message = "v1.4.4 (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [1/9] controller resetAutoBrightness installed (variants=2, lambda=true)"
+                message = "Hook [1/10] controller resetAutoBrightness installed (variants=2, lambda=true)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [2/9] ambient resetAmbientAdapter(String) installed"
+                message = "Hook [2/10] ambient resetAmbientAdapter(String) installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [3/9] stability anti-drift installed (targets=2)"
+                message = "Hook [3/10] stability anti-drift installed (targets=2)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [4/9] StabilityProcess.getAccelerateScale installed (overloads=3)"
+                message = "Hook [4/10] StabilityProcess.getAccelerateScale installed (overloads=3)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [5a/9] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed"
+                message = "Hook [5a/10] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [5b/9] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (8.5 nits) installed"
+                message = "Hook [5b/10] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (8.5 nits) installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [6/9] OplusFeatureReduceBrightness.isReduceDisabled installed"
+                message = "Hook [6/10] OplusFeatureReduceBrightness.isReduceDisabled installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [7/9] LuxEvent\$LuxEventResult.calculateAuxLux balancer installed"
+                message = "Hook [7/10] LuxEvent\$LuxEventResult.calculateAuxLux balancer installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [8/9] StabilityProcess hysteresis widener installed (targets=2)"
+                message = "Hook [8/10] StabilityProcess hysteresis widener installed (targets=2)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [9/9] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed"
+                message = "Hook [9/10] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [10/10] SystemSensorManager\$SensorEventQueue high_pwm_rgb guard installed"
             ),
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:11",
-                message = "HOOK_SUMMARY:installed=9/9,version=1.4.3,sdk=${Build.VERSION.SDK_INT},hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK"
+                message = "HOOK_SUMMARY:installed=10/10,version=1.4.4,sdk=${Build.VERSION.SDK_INT},hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK"
             ),
             LogEntry(
                 type = LogType.INFO,
@@ -278,7 +283,8 @@ object RootHelper {
             6 to "App Smart Dimming (isReduceDisabled)",
             7 to "360° Aux Smoother (calculateAuxLux)",
             8 to "Hysteresis Widener (getLargeChangeLimit)",
-            9 to "Live Curve (getValueByCurve)"
+            9 to "Live Curve (getValueByCurve)",
+            10 to "Under-Display PWM (high_pwm_rgb)"
         )
 
         if (logs.isEmpty()) {
@@ -288,7 +294,7 @@ object RootHelper {
                 isVersionMismatch = false,
                 lastBootTime = "",
                 installedCount = 0,
-                totalCount = 9,
+                totalCount = hookTitles.size,
                 hooks = hookTitles.map { (id, title) ->
                     HookStatusItem(id, title, HookState.UNKNOWN, "Нет данных из system_server")
                 }
@@ -376,6 +382,7 @@ object RootHelper {
                 msg.contains("dual-sensor smoothed") -> hitMap[7] = (hitMap[7] ?: 0) + 1
                 msg.contains("GUARD hysteresis") -> hitMap[8] = (hitMap[8] ?: 0) + 1
                 msg.contains("CURVE override") -> hitMap[9] = (hitMap[9] ?: 0) + 1
+                msg.contains("GUARD PWM sensor") -> hitMap[10] = (hitMap[10] ?: 0) + 1
             }
         }
 
@@ -401,7 +408,7 @@ object RootHelper {
             isVersionMismatch = mismatch,
             lastBootTime = bootTime,
             installedCount = installedCount,
-            totalCount = 9,
+            totalCount = hookTitles.size,
             hooks = items
         )
     }

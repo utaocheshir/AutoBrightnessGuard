@@ -1,8 +1,11 @@
 package com.banoku.oplus.autobrightness;
 
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
 import android.os.Build;
 import android.os.SystemClock;
 import android.util.Log;
+import android.util.SparseArray;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
@@ -10,6 +13,7 @@ import io.github.libxposed.api.XposedModuleInterface;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -44,7 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AutoBrightnessModule extends XposedModule {
 
     public static final String TAG = "AutoBrightnessGuard";
-    public static final String VERSION = "1.4.3";
+    public static final String VERSION = "1.4.4";
 
     // Legacy toggles (SystemProperties)
     public static final String PROP_BLOCK_RESET = "persist.autobrightness.block_reset";
@@ -62,6 +66,7 @@ public class AutoBrightnessModule extends XposedModule {
     public static final String PROP_DUAL_SENSOR_GUARD = "persist.autobrightness.dual_sensor_guard";
     public static final String PROP_DISABLE_MAIN_SENSOR = "persist.autobrightness.disable_main_sensor";
     public static final String PROP_DISABLE_AUX_SENSOR = "persist.autobrightness.disable_aux_sensor";
+    public static final String PROP_DISABLE_PWM_SENSOR = "persist.autobrightness.disable_pwm_sensor";
     public static final String PROP_CURVE_CONFIG = "persist.autobrightness.curve";
 
     // Verified Target Classes in oplus-services.jar
@@ -112,6 +117,7 @@ public class AutoBrightnessModule extends XposedModule {
     private final AtomicInteger smoothedAuxSensor = new AtomicInteger();
     private final AtomicInteger widenedHysteresis = new AtomicInteger();
     private final AtomicInteger appliedCustomCurve = new AtomicInteger();
+    private final AtomicInteger blockedPwmSensor = new AtomicInteger();
 
     // Cached reflection handles (avoid repeated Class.forName in hot brightness paths)
     private static volatile Method sSpGetBoolean;
@@ -124,6 +130,13 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile float mLastAuxEmaLux = Float.NaN;
     private volatile long mLastStockSampleMs = 0L;
     private volatile String mLastStockCurve = "";
+
+    // Fast handle cache for SystemSensorManager$SensorEventQueue (under-display high_pwm_rgb guard)
+    private volatile Field mQueueSensorsEventsField;
+    private final boolean[] mSeenSensorHandle = new boolean[256];
+    private final boolean[] mIsPwmSensorHandle = new boolean[256];
+    private volatile long mLastPwmPropCheckMs = 0L;
+    private volatile boolean mCachedPwmDisabled = false;
 
     private volatile Method mLuxIsResetForceUpdate;
     private volatile Method mBuilderIsAutoMode;
@@ -173,7 +186,10 @@ public class AutoBrightnessModule extends XposedModule {
         // 9. Live Custom Curve Override (OplusDisplayBrightnessModel.getValueByCurve)
         boolean h9 = hookCustomBrightnessCurve(cl);
 
-        boolean[] statusArr = new boolean[] { h1, h2, h3, h4, (h5a && h5b), h6, h7, h8, h9 };
+        // 10. Under-Display PWM Sensor Guard (tcs3720 / high_pwm_rgb in SensorEventQueue)
+        boolean h10 = hookPwmSensorGuard(cl);
+
+        boolean[] statusArr = new boolean[] { h1, h2, h3, h4, (h5a && h5b), h6, h7, h8, h9, h10 };
         int okCount = 0;
         StringBuilder summary = new StringBuilder();
         for (int i = 0; i < statusArr.length; i++) {
@@ -181,7 +197,7 @@ public class AutoBrightnessModule extends XposedModule {
             if (i > 0) summary.append(',');
             summary.append(i + 1).append(':').append(statusArr[i] ? "OK" : "SKIP");
         }
-        note(Log.INFO, "HOOK_SUMMARY:installed=" + okCount + "/9,version=" + VERSION
+        note(Log.INFO, "HOOK_SUMMARY:installed=" + okCount + "/10,version=" + VERSION
                 + ",sdk=" + Build.VERSION.SDK_INT + ",hooks=" + summary);
 
         // Log whether custom curve is active immediately on boot
@@ -258,11 +274,11 @@ public class AutoBrightnessModule extends XposedModule {
                 note(Log.INFO, "resetAutoBrightness(int) skipped: " + t.getMessage());
             }
 
-            note(Log.INFO, "Hook [1/9] controller resetAutoBrightness installed (variants=" + hooked
+            note(Log.INFO, "Hook [1/10] controller resetAutoBrightness installed (variants=" + hooked
                     + ", lambda=" + (alarmLambda != null) + ")");
             return hooked > 0;
         } catch (Throwable t) {
-            note(Log.WARN, "Hook [1/9] controller skipped: " + t.getMessage());
+            note(Log.WARN, "Hook [1/10] controller skipped: " + t.getMessage());
             return false;
         }
     }
@@ -273,10 +289,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method resetAmbient = ambientAdapter.getDeclaredMethod(RESET_AMBIENT_METHOD, String.class);
             deoptimize(resetAmbient);
             hook(resetAmbient).setId("guard-ambient-reset").intercept(new AmbientAdapterGuard());
-            note(Log.INFO, "Hook [2/9] ambient resetAmbientAdapter(String) installed");
+            note(Log.INFO, "Hook [2/10] ambient resetAmbientAdapter(String) installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [2/9] ambient reset skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [2/10] ambient reset skipped: " + t.getMessage());
             return false;
         }
     }
@@ -305,10 +321,10 @@ public class AutoBrightnessModule extends XposedModule {
                 note(Log.INFO, "handleSmallChangeAnimating skipped: " + t.getMessage());
             }
 
-            note(Log.INFO, "Hook [3/9] stability anti-drift installed (targets=" + installed + ")");
+            note(Log.INFO, "Hook [3/10] stability anti-drift installed (targets=" + installed + ")");
             return installed > 0;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [3/9] stability anti-drift skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [3/10] stability anti-drift skipped: " + t.getMessage());
             return false;
         }
     }
@@ -340,10 +356,10 @@ public class AutoBrightnessModule extends XposedModule {
                 installed++;
             } catch (Throwable ignored) { }
 
-            note(Log.INFO, "Hook [4/9] StabilityProcess.getAccelerateScale installed (overloads=" + installed + ")");
+            note(Log.INFO, "Hook [4/10] StabilityProcess.getAccelerateScale installed (overloads=" + installed + ")");
             return installed > 0;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [4/9] StabilityProcess skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [4/10] StabilityProcess skipped: " + t.getMessage());
             return false;
         }
     }
@@ -355,10 +371,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method shouldSkip = darkEnvCls.getDeclaredMethod("shouldSkipProcessing", builderCls);
             deoptimize(shouldSkip);
             hook(shouldSkip).setId("guard-dark-env-skip").intercept(new DarkEnvSkipHook());
-            note(Log.INFO, "Hook [5a/9] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed");
+            note(Log.INFO, "Hook [5a/10] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [5a/9] DarkEnv guard skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [5a/10] DarkEnv guard skipped: " + t.getMessage());
             return false;
         }
     }
@@ -370,10 +386,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method convertNit = ppmCls.getDeclaredMethod("convertNitToBrightness", builderCls);
             deoptimize(convertNit);
             hook(convertNit).setId("guard-nit-floor").intercept(new NightNitFloorHook());
-            note(Log.INFO, "Hook [5b/9] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (" + NIGHT_MIN_FLOOR_NITS + " nits) installed");
+            note(Log.INFO, "Hook [5b/10] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (" + NIGHT_MIN_FLOOR_NITS + " nits) installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [5b/9] Nit floor skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [5b/10] Nit floor skipped: " + t.getMessage());
             return false;
         }
     }
@@ -384,10 +400,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method isDisabled = reduceCls.getDeclaredMethod("isReduceDisabled");
             deoptimize(isDisabled);
             hook(isDisabled).setId("guard-smart-dimming-bypass").intercept(new SmartDimmingBypassHook());
-            note(Log.INFO, "Hook [6/9] OplusFeatureReduceBrightness.isReduceDisabled installed");
+            note(Log.INFO, "Hook [6/10] OplusFeatureReduceBrightness.isReduceDisabled installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [6/9] Smart dimming bypass skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [6/10] Smart dimming bypass skipped: " + t.getMessage());
             return false;
         }
     }
@@ -398,10 +414,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method calcAux = luxEventResultCls.getDeclaredMethod("calculateAuxLux", float.class, float.class);
             deoptimize(calcAux);
             hook(calcAux).setId("guard-dual-aux-balance").intercept(new DualSensorAuxHook());
-            note(Log.INFO, "Hook [7/9] LuxEvent$LuxEventResult.calculateAuxLux balancer installed");
+            note(Log.INFO, "Hook [7/10] LuxEvent$LuxEventResult.calculateAuxLux balancer installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [7/9] Dual sensor balancer skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [7/10] Dual sensor balancer skipped: " + t.getMessage());
             return false;
         }
     }
@@ -427,10 +443,10 @@ public class AutoBrightnessModule extends XposedModule {
                 installed++;
             } catch (Throwable ignored) { }
 
-            note(Log.INFO, "Hook [8/9] StabilityProcess hysteresis widener installed (targets=" + installed + ")");
+            note(Log.INFO, "Hook [8/10] StabilityProcess hysteresis widener installed (targets=" + installed + ")");
             return installed > 0;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [8/9] Hysteresis widener skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [8/10] Hysteresis widener skipped: " + t.getMessage());
             return false;
         }
     }
@@ -441,10 +457,27 @@ public class AutoBrightnessModule extends XposedModule {
             Method getVal = modelCls.getDeclaredMethod("getValueByCurve", String.class, float.class);
             deoptimize(getVal);
             hook(getVal).setId("guard-live-custom-curve").intercept(new CustomCurveHook());
-            note(Log.INFO, "Hook [9/9] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed");
+            note(Log.INFO, "Hook [9/10] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [9/9] Live custom curve skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [9/10] Live custom curve skipped: " + t.getMessage());
+            return false;
+        }
+    }
+
+    private boolean hookPwmSensorGuard(ClassLoader cl) {
+        try {
+            Class<?> queueCls = Class.forName("android.hardware.SystemSensorManager$SensorEventQueue", false, cl);
+            Method dispatch = queueCls.getDeclaredMethod(
+                    "dispatchSensorEvent", int.class, float[].class, int.class, long.class);
+            Field eventsField = queueCls.getDeclaredField("mSensorsEvents");
+            eventsField.setAccessible(true);
+            mQueueSensorsEventsField = eventsField;
+            hook(dispatch).setId("guard-pwm-sensor").intercept(new PwmSensorGuardHook());
+            note(Log.INFO, "Hook [10/10] SystemSensorManager$SensorEventQueue high_pwm_rgb guard installed");
+            return true;
+        } catch (Throwable t) {
+            note(Log.INFO, "Hook [10/10] PWM sensor guard skipped: " + t.getMessage());
             return false;
         }
     }
@@ -839,6 +872,74 @@ public class AutoBrightnessModule extends XposedModule {
                         maybeSampleStockCurve(chain);
                         return stockResult;
                     }
+                }
+            } catch (Throwable ignored) { }
+
+            return chain.proceed();
+        }
+    }
+
+    /**
+     * 10. Under-Display PWM Sensor Guard: suppresses SensorEventQueue.dispatchSensorEvent
+     * inside system_server for the under-display high_pwm_rgb (tcs3720) sensor when
+     * persist.autobrightness.disable_pwm_sensor=1, with near-zero overhead on other sensors.
+     */
+    private final class PwmSensorGuardHook implements XposedInterface.Hooker {
+        private boolean isPwmDisabledCached() {
+            long now = SystemClock.elapsedRealtime();
+            if (mLastPwmPropCheckMs == 0L || (now - mLastPwmPropCheckMs) >= 500L) {
+                mCachedPwmDisabled = isPropertyEnabled(PROP_DISABLE_PWM_SENSOR, false);
+                mLastPwmPropCheckMs = now;
+            }
+            return mCachedPwmDisabled;
+        }
+
+        private boolean detectPwmSensor(Object queueInstance, int handle) {
+            Field eventsField = mQueueSensorsEventsField;
+            if (queueInstance == null || eventsField == null) return false;
+            try {
+                Object mapObj = eventsField.get(queueInstance);
+                if (mapObj instanceof SparseArray) {
+                    @SuppressWarnings("unchecked")
+                    SparseArray<SensorEvent> events = (SparseArray<SensorEvent>) mapObj;
+                    SensorEvent se = events.get(handle);
+                    if (se != null && se.sensor != null) {
+                        Sensor s = se.sensor;
+                        String name = s.getName() != null ? s.getName().toLowerCase(Locale.US) : "";
+                        String st = s.getStringType() != null ? s.getStringType().toLowerCase(Locale.US) : "";
+                        boolean isPwm = (st.contains("high_pwm") || name.contains("high_pwm") || name.contains("tcs3720"))
+                                && !st.contains("cct") && !name.contains("cct");
+                        if (handle >= 0 && handle < mSeenSensorHandle.length) {
+                            mIsPwmSensorHandle[handle] = isPwm;
+                            mSeenSensorHandle[handle] = true;
+                        }
+                        return isPwm;
+                    }
+                }
+            } catch (Throwable ignored) { }
+            return false;
+        }
+
+        @Override
+        public Object intercept(XposedInterface.Chain chain) throws Throwable {
+            try {
+                int handle = (Integer) chain.getArg(0);
+                boolean isPwm;
+                if (handle >= 0 && handle < mSeenSensorHandle.length && mSeenSensorHandle[handle]) {
+                    if (!mIsPwmSensorHandle[handle]) {
+                        return chain.proceed();
+                    }
+                    isPwm = true;
+                } else {
+                    isPwm = detectPwmSensor(chain.getThisObject(), handle);
+                }
+
+                if (isPwm && isPwmDisabledCached()) {
+                    int n = blockedPwmSensor.incrementAndGet();
+                    if (n == 1 || (n % 200 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                        note(Log.INFO, "GUARD PWM sensor (high_pwm) blocked (#" + n + ")");
+                    }
+                    return null;
                 }
             } catch (Throwable ignored) { }
 

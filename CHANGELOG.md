@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.4 (versionCode 18) — Toggleable Under-Display PWM Sensor, Screen Nit Readout & Collapsible Changelog
+
+### Новые возможности и исправления
+- **Отключаемый подэкранный датчик PWM (`tcs3720` / `high_pwm_rgb`)**:
+  - На главной карточке датчиков кнопка `ВКЛ / ВЫКЛ` добавлена и для подэкранного датчика `PWM` (наряду с `MAIN` и `AUX`), с отпиской UI-слушателя при отключении и защитой от случайного отключения всех датчиков одновременно.
+  - В `AutoBrightnessModule` добавлен перехватчик `[10/10]` (`SystemSensorManager$SensorEventQueue.dispatchSensorEvent`), который подавляет события `high_pwm_rgb` / `tcs3720` внутри `system_server` на лету через `persist.autobrightness.disable_pwm_sensor` без перезагрузки (с кешированием дескрипторов сенсоров без аллокаций).
+- **Исправление отображения яркости экрана (`LightSensorsCard`)**:
+  - Устранена несостыковка шкал `255/4095` (когда `SCREEN_BRIGHTNESS` отдавался в AOSP-диапазоне `0..255`, а `sys.oplus.multibrightness` был равен `4095`).
+  - Процент яркости вычисляется точно по `screen_brightness_float`, а рядом выводится расчётная физическая яркость экрана в **нитах** (`~нит`) с учётом активной кривой / HDR-диапазона панели.
+- **Сворачивающаяся карточка «История версий (Changelog)»**:
+  - Во вкладке «Справка» блок Changelog теперь сворачивается и разворачивается по нажатию на заголовок (свёрнут по умолчанию для компактности).
+
 ## 1.4.3 (versionCode 17) — Hook Verification, Curve Profiles, Stock Curve & ColorOS Calibration
 
 ### Новые возможности и исправления

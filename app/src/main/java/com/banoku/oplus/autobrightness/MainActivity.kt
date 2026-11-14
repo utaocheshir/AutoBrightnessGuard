@@ -179,11 +179,22 @@ fun MainAppScreen() {
     // Silent background checks on launch + ensure custom curve persists if enabled
     LaunchedEffect(Unit) {
         scope.launch {
-            val savedCurve = prefs.getString("pref_curve_config", "").orEmpty()
-            if (savedCurve.startsWith("1:") && RootHelper.isRootAvailable()) {
-                val currentProp = RootHelper.getSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, "")
-                if (currentProp != savedCurve) {
-                    RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, savedCurve)
+            if (RootHelper.isRootAvailable()) {
+                val savedCurve = prefs.getString("pref_curve_config", "").orEmpty()
+                if (savedCurve.startsWith("1:")) {
+                    val currentProp = RootHelper.getSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, "")
+                    if (currentProp != savedCurve) {
+                        RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, savedCurve)
+                    }
+                }
+                if (prefs.getBoolean("pref_disable_pwm_sensor", false)) {
+                    RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_PWM_SENSOR, true)
+                }
+                if (prefs.getBoolean("pref_disable_aux_sensor", false)) {
+                    RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR, true)
+                }
+                if (prefs.getBoolean("pref_disable_main_sensor", false)) {
+                    RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR, true)
                 }
             }
             val logs = RootHelper.readModuleLogs()
@@ -397,7 +408,10 @@ fun OverviewTabContent(
 
         // Live Light Sensors Card
         item {
-            LightSensorsCard(onPrimaryLuxChanged = { primaryLux = it })
+            LightSensorsCard(
+                stockCurveNits = stockCurveNits,
+                onPrimaryLuxChanged = { primaryLux = it }
+            )
         }
 
         // Interactive Auto-Brightness Curve Editor Card (with profiles, export/import, and real stock curve)
@@ -430,9 +444,9 @@ fun OverviewTabContent(
                 moduleStatus.isVersionMismatch ->
                     "В памяти v${moduleStatus.loadedVersion} — нужен Soft Reboot для v${BuildConfig.VERSION_NAME}"
                 moduleStatus.installedCount == moduleStatus.totalCount ->
-                    "Модуль активен (${moduleStatus.installedCount}/9 хуков • v${moduleStatus.loadedVersion.ifEmpty { BuildConfig.VERSION_NAME }})"
+                    "Модуль активен (${moduleStatus.installedCount}/${moduleStatus.totalCount} хуков • v${moduleStatus.loadedVersion.ifEmpty { BuildConfig.VERSION_NAME }})"
                 else ->
-                    "Частично активен (${moduleStatus.installedCount}/9 хуков • v${moduleStatus.loadedVersion.ifEmpty { BuildConfig.VERSION_NAME }})"
+                    "Частично активен (${moduleStatus.installedCount}/${moduleStatus.totalCount} хуков • v${moduleStatus.loadedVersion.ifEmpty { BuildConfig.VERSION_NAME }})"
             }
 
             Card(
@@ -532,7 +546,7 @@ fun OverviewTabContent(
                     ) {
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = "Проверка команд в system_server (${moduleStatus.installedCount}/9)",
+                                text = "Проверка команд в system_server (${moduleStatus.installedCount}/${moduleStatus.totalCount})",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFFE2E8F0)
@@ -597,7 +611,7 @@ fun OverviewTabContent(
                                         .padding(horizontal = 10.dp, vertical = 7.dp)
                                 ) {
                                     Text(
-                                        text = "$prefix [${item.id}/9] ${item.name}",
+                                        text = "$prefix [${item.id}/${moduleStatus.totalCount}] ${item.name}",
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = itemColor
@@ -793,7 +807,7 @@ private fun HeaderHero() {
                 color = Color(0xFFFFC107).copy(alpha = 0.2f)
             ) {
                 Text(
-                    text = "v1.4.3",
+                    text = "v1.4.4",
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
@@ -1731,7 +1745,7 @@ fun ToolsTabContent(
                         }
                         null -> {
                             Text(
-                                text = "Текущая версия: v1.4.3",
+                                text = "Текущая версия: v1.4.4",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1927,7 +1941,7 @@ fun ToolsTabContent(
                             val comp = DeviceCompatibility.getCompatibilitySummary()
                             val report = buildString {
                                 appendLine("=== Auto Brightness Guard Diagnostic Report ===")
-                                appendLine("Module Version: 1.4.3 (LibXposed API 102)")
+                                appendLine("Module Version: 1.4.4 (LibXposed API 102)")
                                 appendLine("Device: ${comp.deviceModel} (${comp.deviceCodename})")
                                 appendLine("ROM: ${comp.romVersion}")
                                 appendLine("Build: ${comp.buildDisplayId}")
@@ -2115,6 +2129,7 @@ fun CommandCard(
 fun FaqTabContent(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var expandedFaq by remember { mutableStateOf<Int?>(0) }
+    var changelogExpanded by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -2134,8 +2149,8 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         item {
             FaqItem(
                 id = 0,
-                question = "Что нового в версии 1.4.3?",
-                answer = "1. Живой статус 9/9 хуков: карточка состояния теперь читает реальный ответ system_server и показывает по каждому из 9 хуков — найден ли метод в прошивке, сколько раз сработал и совпадает ли версия в памяти.\n2. Профили кривой (Экспорт / Импорт JSON): сохраняйте несколько кривых яркости, переключайтесь в 1 тап, экспортируйте и импортируйте профили без лишних разрешений.\n3. Реальная штатная кривая на графике: когда своя кривая выключена, модуль считывает родную/обученную кривую из system_server и рисует её на графике (можно взять за основу для своего профиля). Своя кривая сохраняется в persist.* и применяется сразу после перезагрузки.\n4. Точный % яркости и раздельные датчики: расчёт процента яркости откалиброван под sys.oplus.multibrightness (4095 / 8191 / 16383), а тыловой датчик tcs3449 (AUX) отделён от подэкранного tcs3720 High_pwm (PWM).\n5. Прочие улучшения: реальная модель и версия ColorOS/OxygenOS в карточке совместимости, пометки версий ОС (12–17 / 16–17 / 17) в Настройках, кнопка Soft Reboot с подтверждением в Инструментах, фикс бейджа SYSTEM_SERVER и кликабельная ссылка на GitHub.",
+                question = "Что нового в версии 1.4.4?",
+                answer = "1. Отключаемый подэкранный датчик PWM (tcs3720 / high_pwm_rgb): теперь на карточке датчиков кнопка ВКЛ/ВЫКЛ есть для всех трёх сенсоров (MAIN, AUX и PWM), а новый перехватчик [10/10] в system_server подавляет события подэкранного датчика на лету без перезагрузки.\n2. Исправлено отображение яркости экрана: убран конфликт шкал 255/4095 — теперь процент считается точно по screen_brightness_float и рядом отображается расчётная яркость в нитах (~нит).\n3. Компактный раздел «Справка»: карточка «История версий (Changelog)» теперь сворачивается и по умолчанию скрыта.",
                 isExpanded = expandedFaq == 0,
                 onToggle = { expandedFaq = if (expandedFaq == 0) null else 0 }
             )
@@ -2155,7 +2170,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             FaqItem(
                 id = 2,
                 question = "Требуется ли перезагрузка смартфона при обновлении APK?",
-                answer = "Если обновляется только интерфейс приложения — перезагрузка НЕ нужна.\nЕсли обновляется код хуков в ядре Android (AutoBrightnessModule, например при переходе с 1.4.2 на 1.4.3) — для того, чтобы system_server подтянул новый DEX, выполните Soft Reboot (кнопка есть на вкладке «Инструменты») или обычную перезагрузку.\nИзменение же ползунков настроек и профилей кривой перезагрузки НЕ ТРЕБУЕТ никогда (работает мгновенно через SystemProperties).",
+                answer = "Если обновляется только интерфейс приложения — перезагрузка НЕ нужна.\nЕсли обновляется код хуков в ядре Android (AutoBrightnessModule, например при переходе с 1.4.3 на 1.4.4) — для того, чтобы system_server подтянул новый DEX, выполните Soft Reboot (кнопка есть на вкладке «Инструменты») или обычную перезагрузку.\nИзменение же ползунков настроек, датчиков (MAIN/AUX/PWM) и профилей кривой перезагрузки НЕ ТРЕБУЕТ никогда (работает мгновенно через SystemProperties).",
                 isExpanded = expandedFaq == 2,
                 onToggle = { expandedFaq = if (expandedFaq == 2) null else 2 }
             )
@@ -2165,7 +2180,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             FaqItem(
                 id = 3,
                 question = "Влияет ли модуль на расход батареи?",
-                answer = "Нет. С версии 1.4.2–1.4.3 реализована строгая энергоэффективность:\n• Слушатели датчиков освещённости (SENSOR_DELAY_NORMAL) и наблюдатель яркости активны строго пока приложение открыто на экране (ON_RESUME / ON_PAUSE) — в фоне и при выключенном экране потребление 0%.\n• Отключённые на карточке датчики (MAIN / AUX) полностью отписываются от прослушивания в UI.\n• Хуки в system_server не создают фоновых потоков, таймеров и вейклоков, кешируют Method-дескрипторы и кривую без лишних аллокаций.",
+                answer = "Нет. С версии 1.4.2–1.4.4 реализована строгая энергоэффективность:\n• Слушатели датчиков освещённости (SENSOR_DELAY_NORMAL) и наблюдатель яркости активны строго пока приложение открыто на экране (ON_RESUME / ON_PAUSE) — в фоне и при выключенном экране потребление 0%.\n• Отключённые на карточке датчики (MAIN / AUX / PWM) полностью отписываются от прослушивания в UI.\n• Хуки в system_server не создают фоновых потоков, таймеров и вейклоков, кешируют Method-дескрипторы и индекс сенсора в массиве без аллокаций.",
                 isExpanded = expandedFaq == 3,
                 onToggle = { expandedFaq = if (expandedFaq == 3) null else 3 }
             )
@@ -2173,128 +2188,173 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
         item {
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("changelog_card"),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "История версий (Changelog)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Версия 1.4.3 (Текущая — Профили кривой, Живые хуки и ColorOS 17)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF10B981)
-                        )
-                        Text(
-                            text = "• Живая проверка 9/9 хуков в карточке состояния (установка, версия в system_server и число срабатываний).\n• Несколько сохраняемых профилей ручной кривой + экспорт/импорт в JSON.\n• Отображение реальной штатной/обученной кривой из system_server при выключенной своей кривой + сравнение пунктиром.\n• Точный % яркости по sys.oplus.multibrightness (4095/8191/16383) и разделение tcs3449 (AUX) от tcs3720 High_pwm (PWM).\n• Реальная модель, версия ColorOS/OxygenOS и сборка в карточке совместимости + пометки ОС в Настройках + кнопка Soft Reboot.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Версия 1.4.2 (Eco, Live Brightness & Wide Range)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF38BDF8)
-                        )
-                        Text(
-                            text = "• Исправлен фильтр датчиков (исключён flight_detect / ToF / proximity) и добавлена живая строка текущей яркости экрана (% + raw).\n• Кнопки раздельного отключения/включения датчиков света (Основной / Aux) прямо на главном экране.\n• Диапазон ползунков ручной кривой увеличен в 2.5–3 раза (до 3200 нит), ручной ночной минимум расширен до 0–150 нит.\n• Балансировщик 360° Aux-датчика больше не глушит тыловой свет: плавное пропорциональное смешивание 60% + временное EMA-сглаживание.\n• Энергоэффективность (Eco): датчики и наблюдатель яркости работают строго пока приложение открыто на экране (ON_RESUME/ON_PAUSE), а в хуке system_server закеширована рефлексия и конфиг кривой.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { changelogExpanded = !changelogExpanded }
+                            .padding(18.dp)
+                            .testTag("changelog_card_toggle"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "История версий (Changelog)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (changelogExpanded) "Скрыть список изменений" else "Нажмите, чтобы раскрыть (1.1 – 1.4.4)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                            )
+                        }
+                        Icon(
+                            imageVector = if (changelogExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (changelogExpanded) "Свернуть историю версий" else "Развернуть историю версий"
                         )
                     }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    AnimatedVisibility(visible = changelogExpanded) {
+                        Column(
+                            modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Версия 1.4.1 (Live Curve & Hysteresis)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF38BDF8)
-                        )
-                        Text(
-                            text = "• Редактор кривой автояркости (график + 7 ползунков): прямой перехват OplusDisplayBrightnessModel.getValueByCurve(\"\", lux) на лету.\n• Анти-гиперчувствительность: расширение границ StabilityProcess.getLargeChangeLimit(float) от 1.0x до 3.0x против скачков от малейшего колебания света.\n• Безусловный ручной минимум яркости: при отключении авто-минимума 8.5 нит открывается ползунок ручного порога (ниже не опустится никогда при включённом экране).\n• Живые датчики света на главном экране + перевёрнутые логи (новые сверху) + компактный выбор языка внизу Настроек.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.4.4 (Текущая — PWM-переключатель, Яркость в нитах и Компактный UI)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981)
+                                )
+                                Text(
+                                    text = "• Отключаемый подэкранный датчик PWM (tcs3720 / high_pwm_rgb): добавлена кнопка ВКЛ/ВЫКЛ и хук [10/10] в SystemSensorManager\$SensorEventQueue.\n• Исправлено отображение яркости экрана: убрана несостыковка 255/4095, процент читается точно, рядом выводится расчётная яркость (~нит).\n• Карточка «История версий (Changelog)» сделана сворачивающейся (свёрнута по умолчанию).",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Версия 1.4.0 (Verified ColorOS 17)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF38BDF8)
-                        )
-                        Text(
-                            text = "• Перехват resetAutoBrightness() и resetAutoBrightness(int) для совместимости с ColorOS 17 DragOpt.\n• Анти-дрейф в покое: подавление handleStableForceChange / handleSmallChangeAnimating.\n• Стабилизатор задержки: фиксация StabilityProcess.getAccelerateScale <= 1.0x.\n• Ночной минимум 8.5 нит в convertNitToBrightness + пропуск 20-мин затемнения DarkEnv.\n• Отмена поприложенческого затемнения OplusFeatureReduceBrightness (AppFossReduceConfig).\n• Сглаживание 360° Aux-датчика в помещении (LuxEventResult.calculateAuxLux).",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.4.3 (Профили кривой, Живые хуки и ColorOS 17)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                                Text(
+                                    text = "• Живая проверка 9/9 хуков в карточке состояния (установка, версия в system_server и число срабатываний).\n• Несколько сохраняемых профилей ручной кривой + экспорт/импорт в JSON.\n• Отображение реальной штатной/обученной кривой из system_server при выключенной своей кривой + сравнение пунктиром.\n• Разделение tcs3449 (AUX) от tcs3720 High_pwm (PWM) + реальные данные о модели/ColorOS в карточке совместимости + пометки ОС в Настройках + кнопка Soft Reboot.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Версия 1.3b",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFFB300)
-                        )
-                        Text(
-                            text = "• SystemProperties IPC: переключатели в приложении теперь меняют свойства persist.autobrightness.* через root. Хук считывает их моментально на лету БЕЗ перезагрузки смартфона.\n• Точный парсинг логов: поиск самого свежего журнала LSPosed с отображением всех заблокированных сбросов.\n• Виджет статистики на главном экране (количество заблокированных сбросов и время последней защиты).\n• Выбор языка приложения прямо в настройках (Русский, English, Українська).\n• Адаптация под причину сброса AutoReset в OxygenOS 16.\n• Уровень логов переведён на WARN для обхода подавления в службе logd.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.4.2 (Eco, Live Brightness & Wide Range)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                                Text(
+                                    text = "• Исправлен фильтр датчиков (исключён flight_detect / ToF / proximity) и добавлена живая строка текущей яркости экрана (% + raw).\n• Кнопки раздельного отключения/включения датчиков света (Основной / Aux) прямо на главном экране.\n• Диапазон ползунков ручной кривой увеличен в 2.5–3 раза (до 3200 нит), ручной ночной минимум расширен до 0–150 нит.\n• Балансировщик 360° Aux-датчика больше не глушит тыловой свет: плавное пропорциональное смешивание 60% + временное EMA-сглаживание.\n• Энергоэффективность (Eco): датчики и наблюдатель яркости работают строго пока приложение открыто на экране (ON_RESUME/ON_PAUSE), а в хуке system_server закеширована рефлексия и конфиг кривой.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Версия 1.2b",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF38BDF8)
-                        )
-                        Text(
-                            text = "• Дополнительный хук OplusBrightnessAmbientAdapter.resetAmbientAdapter(String reason).\n• Встроенная проверка и скачивание обновлений через GitHub Releases.\n• Полнофункциональное приложение-компаньон с Material 3 UI.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.4.1 (Live Curve & Hysteresis)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                                Text(
+                                    text = "• Редактор кривой автояркости (график + 7 ползунков): прямой перехват OplusDisplayBrightnessModel.getValueByCurve(\"\", lux) на лету.\n• Анти-гиперчувствительность: расширение границ StabilityProcess.getLargeChangeLimit(float) от 1.0x до 3.0x против скачков от малейшего колебания света.\n• Безусловный ручной минимум яркости: при отключении авто-минимума 8.5 нит открывается ползунок ручного порога (ниже не опустится никогда при включённом экране).\n• Живые датчики света на главном экране + перевёрнутые логи (новые сверху) + компактный выбор языка внизу Настроек.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Версия 1.1",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF94A3B8)
-                        )
-                        Text(
-                            text = "• Двухуровневое правило перехвата (lambda + alarm).\n• Принудительная деоптимизация компилятора ART.\n• Режим безопасности Fail-Open для защиты от бутлупов.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.4.0 (Verified ColorOS 17)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                                Text(
+                                    text = "• Перехват resetAutoBrightness() и resetAutoBrightness(int) для совместимости с ColorOS 17 DragOpt.\n• Анти-дрейф в покое: подавление handleStableForceChange / handleSmallChangeAnimating.\n• Стабилизатор задержки: фиксация StabilityProcess.getAccelerateScale <= 1.0x.\n• Ночной минимум 8.5 нит в convertNitToBrightness + пропуск 20-мин затемнения DarkEnv.\n• Отмена поприложенческого затемнения OplusFeatureReduceBrightness (AppFossReduceConfig).\n• Сглаживание 360° Aux-датчика в помещении (LuxEventResult.calculateAuxLux).",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.3b",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFFFB300)
+                                )
+                                Text(
+                                    text = "• SystemProperties IPC: переключатели в приложении теперь меняют свойства persist.autobrightness.* через root. Хук считывает их моментально на лету БЕЗ перезагрузки смартфона.\n• Точный парсинг логов: поиск самого свежего журнала LSPosed с отображением всех заблокированных сбросов.\n• Виджет статистики на главном экране (количество заблокированных сбросов и время последней защиты).\n• Выбор языка приложения прямо в настройках (Русский, English, Українська).\n• Адаптация под причину сброса AutoReset в OxygenOS 16.\n• Уровень логов переведён на WARN для обхода подавления в службе logd.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.2b",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                                Text(
+                                    text = "• Дополнительный хук OplusBrightnessAmbientAdapter.resetAmbientAdapter(String reason).\n• Встроенная проверка и скачивание обновлений через GitHub Releases.\n• Полнофункциональное приложение-компаньон с Material 3 UI.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.1",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF94A3B8)
+                                )
+                                Text(
+                                    text = "• Двухуровневое правило перехвата (lambda + alarm).\n• Принудительная деоптимизация компилятора ART.\n• Режим безопасности Fail-Open для защиты от бутлупов.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -2316,7 +2376,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Автор модуля: Banoku\nВерсия: 1.4.3\nAPI: LibXposed 102.0.0 (LSPosed)",
+                        text = "Автор модуля: Banoku\nВерсия: 1.4.4\nAPI: LibXposed 102.0.0 (LSPosed)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

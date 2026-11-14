@@ -16,8 +16,8 @@ android {
         applicationId = "com.banoku.oplus.autobrightness"
         minSdk = 31
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.4.3"
+        versionCode = 18
+        versionName = "1.4.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

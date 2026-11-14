@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.4.3-blue.svg" alt="Release" /></a>
+  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.4.4-blue.svg" alt="Release" /></a>
   <a href="https://github.com/libxposed"><img src="https://img.shields.io/badge/LibXposed-API%20102-orange.svg" alt="LibXposed API 102" /></a>
   <a href="https://github.com/utaocheshir/AutoBrightnessGuard"><img src="https://img.shields.io/badge/Target-OnePlus%20%7C%20OxygenOS%20%7C%20ColorOS-green.svg" alt="Platform" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg" alt="License" /></a>
@@ -39,11 +39,11 @@ In OxygenOS and ColorOS 12–17:
 - **Instant SystemProperties IPC:** Settings apply immediately via `persist.autobrightness.*` without restarting `system_server`.
 
 ### ✨ Companion App Features
-- **Overview (v1.4.3):** Live 9/9 hook verification card (shows which methods were found & hooked inside `system_server` + hit counts), calibrated light sensors (`MAIN` / `AUX` toggleable, `tcs3720` PWM monitor), live screen brightness (`sys.oplus.multibrightness`), and real ColorOS / OxygenOS / device compatibility details.
-- **Multi-Profile Curve Editor (v1.4.3):** Save, switch, rename, and export/import custom nit curves (`.json`), or inspect the live stock ROM curve (`getValueByCurve`) directly on the chart.
+- **Overview (v1.4.4):** Live 10/10 hook verification card (shows which methods were found & hooked inside `system_server` + hit counts), toggleable `MAIN`, `AUX` (`tcs3449`), and under-display `PWM` (`tcs3720` / `high_pwm_rgb`) light sensors, live screen brightness readout in `%` & `nits`, and real ColorOS / OxygenOS / device compatibility details.
+- **Multi-Profile Curve Editor:** Save, switch, rename, and export/import custom nit curves (`.json`), or inspect the live stock ROM curve (`getValueByCurve`) directly on the chart.
 - **Settings:** Instant `SystemProperties` toggles with OS version badges (`OOS/COS 12–17`, `COS/OOS 16–17`, `ColorOS 17`).
 - **Live Logcat & Tools:** Built-in root log viewer (`BLOCKED`, `HOOK`, `PASS`), Soft Reboot button (`killall system_server`), one-click GitHub updater, and 4PDA/GitHub diagnostic report generator.
-- **FAQ:** Up-to-date technical breakdown for ColorOS/OxygenOS 12–17.
+- **FAQ:** Up-to-date technical breakdown for ColorOS/OxygenOS 12–17 with collapsible Changelog.
 
 ### 🚀 Installation
 1. Download the latest APK from the [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases) page.
@@ -87,11 +87,11 @@ Expected output upon successful block:
 - **Настройки на лету:** переключатели применяются мгновенно через `SystemProperties` (`persist.autobrightness.*`).
 
 ### ✨ Возможности приложения-компаньона
-- **Обзор (1.4.3):** живая верификация всех 9 хуков в `system_server` (статус и число срабатываний), раздельные датчики света (`MAIN`, `AUX`, `tcs3720 PWM-монитор`), точный % яркости по `sys.oplus.multibrightness` и реальные данные о прошивке/модели.
-- **Редактор профилей кривой (1.4.3):** несколько сохраняемых профилей с экспортом/импортом в JSON, отображение реальной штатной кривой ROM и кнопка копирования штатной кривой в профиль.
+- **Обзор (1.4.4):** живая верификация всех 10 хуков в `system_server` (статус и число срабатываний), раздельное отключение датчиков света (`MAIN`, `AUX`, подэкранный `PWM tcs3720`), точный вывод яркости экрана (`%` и расчётные `нит`) и реальные данные о прошивке/модели.
+- **Редактор профилей кривой:** несколько сохраняемых профилей с экспортом/импортом в JSON, отображение реальной штатной кривой ROM и кнопка копирования штатной кривой в профиль.
 - **Настройки:** мгновенные переключатели через `SystemProperties` с пометками актуальности для версий прошивки (12–17 / 16–17 / 17).
 - **Логи и Инструменты:** чтение логов LSPosed/logcat, кнопка **Soft Reboot**, обновление с GitHub в 1 клик и генератор диагностических отчётов.
-- **Справка:** актуальное описание работы всех модулей версии 1.4.3.
+- **Справка:** актуальное описание работы всех модулей версии 1.4.4 и сворачивающаяся история версий.
 
 ### 🚀 Установка
 1. Скачайте APK со страницы [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases).

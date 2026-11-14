@@ -60,10 +60,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
+import com.banoku.oplus.autobrightness.BrightnessMath
 import com.banoku.oplus.autobrightness.R
 import com.banoku.oplus.autobrightness.util.DeviceCompatibility
 import com.banoku.oplus.autobrightness.util.RootHelper
 import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.math.ln
 import kotlin.math.roundToInt
 
@@ -129,6 +131,7 @@ private fun readCurrentBrightness(context: Context): Pair<Float, Int> {
 @Composable
 fun LightSensorsCard(
     modifier: Modifier = Modifier,
+    stockCurveNits: List<Float>? = null,
     onPrimaryLuxChanged: (Float?) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -165,22 +168,41 @@ fun LightSensorsCard(
     val initialBrightness = remember { readCurrentBrightness(context) }
     var brightnessFloat by remember { mutableFloatStateOf(initialBrightness.first) }
     var brightnessInt by remember { mutableIntStateOf(initialBrightness.second) }
-    val maxBrightnessScale = remember(brightnessInt) {
-        DeviceCompatibility.getMultibrightnessMax(brightnessInt)
+
+    val panelRange = remember(context, stockCurveNits) {
+        val stockMin = stockCurveNits?.firstOrNull()?.takeIf { it in 1f..50f }
+        val stockMax = stockCurveNits?.lastOrNull()?.takeIf { it >= 200f }
+        val hdrCaps = try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                context.display?.hdrCapabilities
+            } else {
+                null
+            }
+        } catch (_: Throwable) {
+            null
+        }
+        val hdrMin = hdrCaps?.desiredMinLuminance?.takeIf { it in 1f..20f }
+        val hdrMax = hdrCaps?.desiredMaxAverageLuminance?.takeIf { it in 300f..3500f }
+        val minNit = stockMin ?: hdrMin ?: 2.0f
+        val maxNit = (stockMax ?: hdrMax ?: 800f).coerceIn(250f, 3500f)
+        minNit to maxNit
     }
 
-    // Individual sensor enable/disable switches backed by SystemProperties (MAIN and AUX/tcs3449 strictly separated)
+    // Individual sensor enable/disable switches backed by SystemProperties (MAIN, AUX/tcs3449, and PWM/tcs3720)
     var mainSensorDisabled by remember {
         mutableStateOf(prefs.getBoolean("pref_disable_main_sensor", false))
     }
     var auxSensorDisabled by remember {
         mutableStateOf(prefs.getBoolean("pref_disable_aux_sensor", false))
     }
+    var pwmSensorDisabled by remember {
+        mutableStateOf(prefs.getBoolean("pref_disable_pwm_sensor", false))
+    }
     val toastApplied = stringResource(R.string.toast_applied_live)
 
     // Register sensors & brightness observer ONLY on ON_RESUME and unregister immediately on ON_PAUSE
-    // Also skip registering UI listeners for individually disabled MAIN/AUX sensors for maximum battery savings.
-    DisposableEffect(lifecycleOwner, sensorManager, detectedSensors, mainSensorDisabled, auxSensorDisabled) {
+    // Also skip registering UI listeners for individually disabled MAIN/AUX/PWM sensors for maximum battery savings.
+    DisposableEffect(lifecycleOwner, sensorManager, detectedSensors, mainSensorDisabled, auxSensorDisabled, pwmSensorDisabled) {
         val mainHandler = Handler(Looper.getMainLooper())
         val listeners = mutableListOf<Pair<Sensor, SensorEventListener>>()
         var brightnessObserver: ContentObserver? = null
@@ -189,7 +211,7 @@ fun LightSensorsCard(
         fun isRoleDisabled(role: SensorRole): Boolean = when (role) {
             SensorRole.MAIN -> mainSensorDisabled
             SensorRole.AUX -> auxSensorDisabled
-            SensorRole.PWM -> false
+            SensorRole.PWM -> pwmSensorDisabled
         }
 
         fun registerAll() {
@@ -343,11 +365,12 @@ fun LightSensorsCard(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-            // Current Screen Brightness Readout Row (calibrated dynamically by sys.oplus.multibrightness)
+            // Current Screen Brightness Readout Row (% + estimated physical nits, avoiding 255/4095 scale mismatch)
             ScreenBrightnessRow(
                 brightnessFloat = brightnessFloat,
                 brightnessInt = brightnessInt,
-                maxScale = maxBrightnessScale
+                minNit = panelRange.first,
+                maxNit = panelRange.second
             )
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
@@ -359,53 +382,62 @@ fun LightSensorsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                 )
             } else {
+                fun setRoleDisabled(role: SensorRole, disabled: Boolean) {
+                    when (role) {
+                        SensorRole.MAIN -> {
+                            mainSensorDisabled = disabled
+                            if (disabled) onPrimaryLuxChanged(null)
+                            prefs.edit().putBoolean("pref_disable_main_sensor", disabled).apply()
+                            scope.launch {
+                                RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR, disabled)
+                            }
+                        }
+                        SensorRole.AUX -> {
+                            auxSensorDisabled = disabled
+                            prefs.edit().putBoolean("pref_disable_aux_sensor", disabled).apply()
+                            scope.launch {
+                                RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR, disabled)
+                            }
+                        }
+                        SensorRole.PWM -> {
+                            pwmSensorDisabled = disabled
+                            prefs.edit().putBoolean("pref_disable_pwm_sensor", disabled).apply()
+                            scope.launch {
+                                RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_PWM_SENSOR, disabled)
+                            }
+                        }
+                    }
+                }
+
+                fun isRoleCurrentlyEnabled(role: SensorRole): Boolean = when (role) {
+                    SensorRole.MAIN -> !mainSensorDisabled
+                    SensorRole.AUX -> !auxSensorDisabled
+                    SensorRole.PWM -> !pwmSensorDisabled
+                }
+
                 detectedSensors.forEach { item ->
                     val luxValue = readings[item.key]
-                    val canToggle = item.role == SensorRole.MAIN || item.role == SensorRole.AUX
-                    val isDisabled = when (item.role) {
-                        SensorRole.MAIN -> mainSensorDisabled
-                        SensorRole.AUX -> auxSensorDisabled
-                        SensorRole.PWM -> false
-                    }
+                    val isDisabled = !isRoleCurrentlyEnabled(item.role)
                     SensorReadingRow(
                         item = item,
                         lux = luxValue,
                         isSensorEnabled = !isDisabled,
-                        canToggle = canToggle,
+                        canToggle = true,
                         onToggleSensor = {
-                            if (item.role == SensorRole.MAIN) {
-                                val nextDisabled = !mainSensorDisabled
-                                mainSensorDisabled = nextDisabled
-                                // Never leave both MAIN and AUX sensors disabled simultaneously
-                                if (nextDisabled && auxSensorDisabled) {
-                                    auxSensorDisabled = false
-                                    prefs.edit().putBoolean("pref_disable_aux_sensor", false).apply()
-                                    scope.launch {
-                                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR, false)
+                            val nextDisabled = isRoleCurrentlyEnabled(item.role)
+                            if (nextDisabled) {
+                                // Ensure at least one light sensor stays active on the device
+                                val distinctRoles = detectedSensors.map { it.role }.distinct()
+                                val activeOthers = distinctRoles.filter { it != item.role && isRoleCurrentlyEnabled(it) }
+                                if (activeOthers.isEmpty()) {
+                                    val fallback = distinctRoles.firstOrNull { it != item.role }
+                                    if (fallback != null) {
+                                        setRoleDisabled(fallback, false)
                                     }
                                 }
-                                if (nextDisabled) onPrimaryLuxChanged(null)
-                                prefs.edit().putBoolean("pref_disable_main_sensor", nextDisabled).apply()
-                                scope.launch {
-                                    RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR, nextDisabled)
-                                }
-                                Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
-                            } else if (item.role == SensorRole.AUX) {
-                                val nextDisabled = !auxSensorDisabled
-                                auxSensorDisabled = nextDisabled
-                                if (nextDisabled && mainSensorDisabled) {
-                                    mainSensorDisabled = false
-                                    prefs.edit().putBoolean("pref_disable_main_sensor", false).apply()
-                                    scope.launch {
-                                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR, false)
-                                    }
-                                }
-                                prefs.edit().putBoolean("pref_disable_aux_sensor", nextDisabled).apply()
-                                scope.launch {
-                                    RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR, nextDisabled)
-                                }
-                                Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                             }
+                            setRoleDisabled(item.role, nextDisabled)
+                            Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                         }
                     )
                 }
@@ -418,20 +450,35 @@ fun LightSensorsCard(
 private fun ScreenBrightnessRow(
     brightnessFloat: Float,
     brightnessInt: Int,
-    maxScale: Int
+    minNit: Float,
+    maxNit: Float
 ) {
-    val safeMax = maxScale.coerceAtLeast(255).toFloat()
-    val pct = when {
-        brightnessFloat in 0f..1f -> (brightnessFloat * 100f).roundToInt().coerceIn(0, 100)
-        brightnessInt >= 0 -> ((brightnessInt / safeMax) * 100f).roundToInt().coerceIn(0, 100)
-        else -> -1
+    val fraction = when {
+        brightnessFloat in 0f..1f -> brightnessFloat
+        brightnessInt >= 0 -> {
+            val scale = if (brightnessInt > 255) {
+                DeviceCompatibility.getMultibrightnessMax(brightnessInt).toFloat()
+            } else {
+                255f
+            }
+            (brightnessInt / scale).coerceIn(0f, 1f)
+        }
+        else -> -1f
     }
-    val progress = if (pct >= 0) pct / 100f else 0f
+    val pct = if (fraction >= 0f) (fraction * 100f).roundToInt().coerceIn(0, 100) else -1
+    val progress = if (fraction >= 0f) fraction.coerceIn(0f, 1f) else 0f
 
-    val valueLabel = when {
-        pct >= 0 && brightnessInt >= 0 -> "$pct% ($brightnessInt/$maxScale)"
-        pct >= 0 -> "$pct%"
-        else -> stringResource(R.string.sensors_waiting)
+    val nitUnit = stringResource(R.string.unit_nits)
+    val valueLabel = if (fraction >= 0f) {
+        val estNits = BrightnessMath.estimateScreenNits(fraction, minNit, maxNit)
+        val nitsText = if (estNits >= 100f) {
+            "${estNits.roundToInt()}"
+        } else {
+            String.format(Locale.US, "%.1f", estNits)
+        }
+        "$pct% (~$nitsText $nitUnit)"
+    } else {
+        stringResource(R.string.sensors_waiting)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {

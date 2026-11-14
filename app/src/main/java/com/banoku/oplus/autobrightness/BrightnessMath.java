@@ -254,6 +254,23 @@ public final class BrightnessMath {
         return parsed;
     }
 
+    /**
+     * Estimates physical screen brightness in nits from normalized Android brightness fraction [0..1]
+     * using perceptual gamma (~2.2) across [minNit..maxNit].
+     */
+    public static float estimateScreenNits(float fraction, float minNit, float maxNit) {
+        if (Float.isNaN(fraction) || Float.isInfinite(fraction)) {
+            return Math.max(0f, minNit);
+        }
+        float clamped = clamp(fraction, 0f, 1f);
+        if (clamped <= 0f) {
+            return 0f;
+        }
+        float low = Math.max(1.0f, minNit);
+        float high = Math.max(low + 50f, maxNit);
+        return (float) (low + (high - low) * Math.pow(clamped, 2.2));
+    }
+
     public static float[] copyDefaults() {
         float[] copy = new float[CURVE_POINT_COUNT];
         System.arraycopy(DEFAULT_CURVE_NITS, 0, copy, 0, CURVE_POINT_COUNT);

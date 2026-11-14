@@ -17,7 +17,7 @@ class ModuleUnitTest {
 
     @Test
     fun versionAndTagCheck() {
-        assertEquals("1.4.3", AutoBrightnessModule.VERSION)
+        assertEquals("1.4.4", AutoBrightnessModule.VERSION)
         assertEquals("AutoBrightnessGuard", AutoBrightnessModule.TAG)
         assertEquals("persist.autobrightness.block_reset", AutoBrightnessModule.PROP_BLOCK_RESET)
         assertEquals("persist.autobrightness.block_ambient", AutoBrightnessModule.PROP_BLOCK_AMBIENT)
@@ -30,6 +30,7 @@ class ModuleUnitTest {
         assertEquals("persist.autobrightness.dual_sensor_guard", AutoBrightnessModule.PROP_DUAL_SENSOR_GUARD)
         assertEquals("persist.autobrightness.disable_main_sensor", AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR)
         assertEquals("persist.autobrightness.disable_aux_sensor", AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR)
+        assertEquals("persist.autobrightness.disable_pwm_sensor", AutoBrightnessModule.PROP_DISABLE_PWM_SENSOR)
         assertEquals("persist.autobrightness.curve", AutoBrightnessModule.PROP_CURVE_CONFIG)
         assertEquals(8.5f, BrightnessMath.NIGHT_MIN_FLOOR_NITS, 0.001f)
         assertEquals(3500.0f, BrightnessMath.MAX_CURVE_NIT, 0.001f)
@@ -127,14 +128,22 @@ class ModuleUnitTest {
     }
 
     @Test
+    fun screenNitEstimationCheck() {
+        assertEquals(0f, BrightnessMath.estimateScreenNits(0f, 2f, 800f), 0.01f)
+        assertEquals(800f, BrightnessMath.estimateScreenNits(1f, 2f, 800f), 0.01f)
+        val mid = BrightnessMath.estimateScreenNits(0.5f, 2f, 800f)
+        assertTrue(mid in 140f..210f)
+    }
+
+    @Test
     fun updateCheckerVersionComparison() {
         assertFalse(UpdateChecker.isVersionNewer("V1.3b", "1.3b"))
         assertFalse(UpdateChecker.isVersionNewer("v1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.4.3", "1.4.3"))
+        assertFalse(UpdateChecker.isVersionNewer("1.4.4", "1.4.4"))
+        assertTrue(UpdateChecker.isVersionNewer("1.4.4", "1.4.3"))
         assertTrue(UpdateChecker.isVersionNewer("1.4.3", "1.4.2"))
-        assertTrue(UpdateChecker.isVersionNewer("1.4.2", "1.4.1"))
         assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.4.3"))
+        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.4.4"))
     }
 
     @Test
@@ -149,14 +158,15 @@ class ModuleUnitTest {
         assertEquals(2, stats.totalBlocked)
         assertEquals("20:11:49", stats.lastBlockedTime)
 
-        val runtimeStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "1.4.3")
+        val runtimeStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "1.4.4")
         assertTrue(runtimeStatus.moduleDetected)
-        assertEquals("1.4.3", runtimeStatus.loadedVersion)
+        assertEquals("1.4.4", runtimeStatus.loadedVersion)
         assertFalse(runtimeStatus.isVersionMismatch)
-        assertEquals(9, runtimeStatus.installedCount)
+        assertEquals(10, runtimeStatus.totalCount)
+        assertEquals(10, runtimeStatus.installedCount)
         assertTrue(runtimeStatus.hooks.all { it.state == HookState.INSTALLED })
 
-        val mismatchStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "1.4.4")
+        val mismatchStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "1.4.5")
         assertTrue(mismatchStatus.isVersionMismatch)
 
         val stockCurve = RootHelper.extractLatestStockCurve(sampleLogs)
