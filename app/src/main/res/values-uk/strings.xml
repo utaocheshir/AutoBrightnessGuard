@@ -114,4 +114,7 @@
     <string name="os_tag_16_17">COS/OOS 16–17</string>
     <string name="os_tag_17_verified">ColorOS 17 (і 16*)</string>
     <string name="os_tag_universal">Усі 12–17</string>
+    <string name="panel_range_calibrated">Панель: %.1f–%.0f ніт (дані системи)</string>
+    <string name="panel_range_uncalibrated">Оцінка до %.0f ніт (немає калібрування su)</string>
+    <string name="curve_screen_now">Екран: %1$s %2$s</string>
 </resources>

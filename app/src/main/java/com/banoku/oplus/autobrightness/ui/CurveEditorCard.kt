@@ -81,6 +81,7 @@ import com.banoku.oplus.autobrightness.util.CurveProfile
 import com.banoku.oplus.autobrightness.util.CurveProfileRepository
 import com.banoku.oplus.autobrightness.util.RootHelper
 import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -92,6 +93,8 @@ private val CURVE_POINT_MAX_NITS = listOf(250f, 350f, 600f, 1000f, 1600f, 2400f,
 fun CurveEditorCard(
     modifier: Modifier = Modifier,
     liveLux: Float? = null,
+    liveScreenNit: Float? = null,
+    displayMaxNit: Float? = null,
     stockCurveNits: List<Float>? = null,
     onRefreshStockCurve: () -> Unit = {}
 ) {
@@ -288,6 +291,14 @@ fun CurveEditorCard(
     val hasRealStock = stockCurveNits != null && stockCurveNits.size == BrightnessMath.CURVE_POINT_COUNT
     val displayedPoints = if (!curveEnabled && hasRealStock) stockCurveNits!! else nitPoints
     val isShowingStockReal = !curveEnabled && hasRealStock
+    val pointMaxNits = remember(stockCurveNits, displayMaxNit) {
+        List(BrightnessMath.CURVE_POINT_COUNT) { idx ->
+            val base = CURVE_POINT_MAX_NITS[idx]
+            val stockRef = (stockCurveNits?.getOrNull(idx) ?: 0f) * 1.15f
+            val panelRef = if (idx == BrightnessMath.CURVE_POINT_COUNT - 1) (displayMaxNit ?: 0f) else 0f
+            maxOf(base, stockRef, panelRef).coerceAtMost(BrightnessMath.MAX_CURVE_NIT)
+        }
+    }
 
     Card(
         modifier = modifier
@@ -493,6 +504,7 @@ fun CurveEditorCard(
                 stockReferencePoints = if (curveEnabled) stockCurveNits else null,
                 selectedIndex = selectedIndex,
                 liveLux = liveLux,
+                liveScreenNit = liveScreenNit,
                 isEnabled = curveEnabled,
                 hasRealStock = hasRealStock,
                 onRefreshStockCurve = onRefreshStockCurve
@@ -597,7 +609,7 @@ fun CurveEditorCard(
             CurveAnchorSliderRow(
                 label = "${CURVE_POINT_LABELS[selectedIndex]} (${nitPoints[selectedIndex].roundToInt()} ${stringResource(R.string.unit_nits)})",
                 value = nitPoints[selectedIndex],
-                maxValue = CURVE_POINT_MAX_NITS[selectedIndex],
+                maxValue = pointMaxNits[selectedIndex],
                 onValueChange = { newVal ->
                     val updated = nitPoints.toMutableList()
                     updated[selectedIndex] = newVal
@@ -671,7 +683,7 @@ fun CurveEditorCard(
                         CurveAnchorSliderRow(
                             label = "$label → ${nitPoints[idx].roundToInt()} ${stringResource(R.string.unit_nits)}",
                             value = nitPoints[idx],
-                            maxValue = CURVE_POINT_MAX_NITS[idx],
+                            maxValue = pointMaxNits[idx],
                             onValueChange = { newVal ->
                                 val updated = nitPoints.toMutableList()
                                 updated[idx] = newVal
@@ -728,13 +740,15 @@ private fun CurveGraphCanvas(
     stockReferencePoints: List<Float>?,
     selectedIndex: Int,
     liveLux: Float?,
+    liveScreenNit: Float?,
     isEnabled: Boolean,
     hasRealStock: Boolean,
     onRefreshStockCurve: () -> Unit
 ) {
     val allMax = listOfNotNull(
         nitPoints.maxOrNull(),
-        stockReferencePoints?.maxOrNull()
+        stockReferencePoints?.maxOrNull(),
+        liveScreenNit
     ).maxOrNull() ?: 600f
     val maxNitAxis = max(650f, allMax * 1.1f)
     val maxLogX = ln(1f + BrightnessMath.CURVE_ANCHOR_LUX.last())
@@ -866,6 +880,26 @@ private fun CurveGraphCanvas(
                 )
             }
 
+            // Live actual screen nit indicator (synchronized with Card 1)
+            if (liveScreenNit != null && liveScreenNit > 0f) {
+                val sy = yForNit(liveScreenNit)
+                drawLine(
+                    color = Color(0xFF38BDF8).copy(alpha = 0.45f),
+                    start = Offset(padLeft, sy),
+                    end = Offset(padLeft + plotW, sy),
+                    strokeWidth = 1.2.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+                )
+                if (liveLux != null) {
+                    drawCircle(
+                        color = Color(0xFF38BDF8),
+                        radius = 7.dp.toPx(),
+                        center = Offset(xForLux(liveLux), sy),
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+                }
+            }
+
             // Anchor circles
             points.forEachIndexed { idx, pt ->
                 val isSelected = idx == selectedIndex
@@ -885,47 +919,66 @@ private fun CurveGraphCanvas(
         }
 
         // Top-left status overlay inside chart
-        Row(
+        Column(
             modifier = Modifier.align(Alignment.TopStart),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = when {
-                    isEnabled -> Color(0xFF0C4A6E)
-                    hasRealStock -> Color(0xFF78350F)
-                    else -> Color(0xFF1E293B)
-                },
-                modifier = if (!isEnabled) {
-                    Modifier.clip(RoundedCornerShape(6.dp)).clickable { onRefreshStockCurve() }
-                } else {
-                    Modifier
-                }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = when {
-                        isEnabled -> stringResource(R.string.curve_badge_active)
-                        hasRealStock -> stringResource(R.string.curve_badge_stock_live)
-                        else -> stringResource(R.string.curve_badge_stock)
-                    },
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
                     color = when {
-                        isEnabled -> Color(0xFF38BDF8)
-                        hasRealStock -> Color(0xFFFBBF24)
-                        else -> Color(0xFF94A3B8)
+                        isEnabled -> Color(0xFF0C4A6E)
+                        hasRealStock -> Color(0xFF78350F)
+                        else -> Color(0xFF1E293B)
+                    },
+                    modifier = if (!isEnabled) {
+                        Modifier.clip(RoundedCornerShape(6.dp)).clickable { onRefreshStockCurve() }
+                    } else {
+                        Modifier
                     }
-                )
+                ) {
+                    Text(
+                        text = when {
+                            isEnabled -> stringResource(R.string.curve_badge_active)
+                            hasRealStock -> stringResource(R.string.curve_badge_stock_live)
+                            else -> stringResource(R.string.curve_badge_stock)
+                        },
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = when {
+                            isEnabled -> Color(0xFF38BDF8)
+                            hasRealStock -> Color(0xFFFBBF24)
+                            else -> Color(0xFF94A3B8)
+                        }
+                    )
+                }
+                if (liveLux != null && currentTargetNit != null) {
+                    Text(
+                        text = "${if (liveLux >= 100f) liveLux.toInt() else String.format("%.1f", liveLux)} lx → ${currentTargetNit.roundToInt()} ${stringResource(R.string.unit_nits)}",
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF34D399)
+                    )
+                }
             }
-            if (liveLux != null && currentTargetNit != null) {
+
+            if (liveScreenNit != null) {
+                val screenNitText = if (liveScreenNit >= 100f) {
+                    "${liveScreenNit.roundToInt()}"
+                } else {
+                    String.format(Locale.US, "%.1f", liveScreenNit)
+                }
                 Text(
-                    text = "${if (liveLux >= 100f) liveLux.toInt() else String.format("%.1f", liveLux)} lx → ${currentTargetNit.roundToInt()} ${stringResource(R.string.unit_nits)}",
-                    fontSize = 11.sp,
+                    text = stringResource(R.string.curve_screen_now, screenNitText, stringResource(R.string.unit_nits)),
+                    fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF34D399)
+                    color = Color(0xFF38BDF8)
                 )
             }
         }

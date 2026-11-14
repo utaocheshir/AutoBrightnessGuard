@@ -37,6 +37,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -56,14 +57,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
-import com.banoku.oplus.autobrightness.BrightnessMath
 import com.banoku.oplus.autobrightness.R
 import com.banoku.oplus.autobrightness.util.DeviceCompatibility
+import com.banoku.oplus.autobrightness.util.DisplayCalibration
 import com.banoku.oplus.autobrightness.util.RootHelper
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.ln
@@ -132,7 +135,10 @@ private fun readCurrentBrightness(context: Context): Pair<Float, Int> {
 fun LightSensorsCard(
     modifier: Modifier = Modifier,
     stockCurveNits: List<Float>? = null,
-    onPrimaryLuxChanged: (Float?) -> Unit = {}
+    displayCalibration: DisplayCalibration? = null,
+    onPrimaryLuxChanged: (Float?) -> Unit = {},
+    onLiveScreenNitChanged: (Float?) -> Unit = {},
+    onBrightnessChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -168,8 +174,11 @@ fun LightSensorsCard(
     val initialBrightness = remember { readCurrentBrightness(context) }
     var brightnessFloat by remember { mutableFloatStateOf(initialBrightness.first) }
     var brightnessInt by remember { mutableIntStateOf(initialBrightness.second) }
+    var observerChangeTick by remember { mutableIntStateOf(0) }
 
-    val panelRange = remember(context, stockCurveNits) {
+    val panelRange = remember(context, stockCurveNits, displayCalibration) {
+        val calMin = displayCalibration?.minNit?.takeIf { it in 0.1f..50f }
+        val calMax = displayCalibration?.maxNit?.takeIf { it >= 200f }
         val stockMin = stockCurveNits?.firstOrNull()?.takeIf { it in 1f..50f }
         val stockMax = stockCurveNits?.lastOrNull()?.takeIf { it >= 200f }
         val hdrCaps = try {
@@ -181,11 +190,47 @@ fun LightSensorsCard(
         } catch (_: Throwable) {
             null
         }
-        val hdrMin = hdrCaps?.desiredMinLuminance?.takeIf { it in 1f..20f }
-        val hdrMax = hdrCaps?.desiredMaxAverageLuminance?.takeIf { it in 300f..3500f }
-        val minNit = stockMin ?: hdrMin ?: 2.0f
-        val maxNit = (stockMax ?: hdrMax ?: 800f).coerceIn(250f, 3500f)
+        val hdrMin = hdrCaps?.desiredMinLuminance?.takeIf { it in 0.5f..20f }
+        // Use desiredMaxLuminance (actual panel peak), NOT desiredMaxAverageLuminance (which OnePlus hardcodes to 500)
+        val hdrPeak = hdrCaps?.desiredMaxLuminance?.takeIf { it in 400f..6000f }
+        val minNit = calMin ?: stockMin ?: hdrMin ?: 2.0f
+        val maxNit = (calMax ?: stockMax ?: hdrPeak ?: 1600f).coerceIn(250f, 6000f)
         minNit to maxNit
+    }
+
+    val brightnessFraction = remember(brightnessFloat, brightnessInt) {
+        when {
+            brightnessFloat in 0f..1f -> brightnessFloat
+            brightnessInt >= 0 -> {
+                val scale = if (brightnessInt > 255) {
+                    DeviceCompatibility.getMultibrightnessMax(brightnessInt).toFloat()
+                } else {
+                    255f
+                }
+                (brightnessInt / scale).coerceIn(0f, 1f)
+            }
+            else -> -1f
+        }
+    }
+
+    val (resolvedNits, isExactCalibration) = remember(brightnessFraction, displayCalibration, panelRange) {
+        RootHelper.resolveScreenNits(
+            fraction = brightnessFraction,
+            calibration = displayCalibration,
+            fallbackMinNit = panelRange.first,
+            fallbackMaxNit = panelRange.second
+        )
+    }
+
+    LaunchedEffect(resolvedNits) {
+        onLiveScreenNitChanged(resolvedNits)
+    }
+
+    LaunchedEffect(observerChangeTick) {
+        if (observerChangeTick > 0) {
+            delay(350L)
+            onBrightnessChanged()
+        }
     }
 
     // Individual sensor enable/disable switches backed by SystemProperties (MAIN, AUX/tcs3449, and PWM/tcs3720)
@@ -256,6 +301,7 @@ fun LightSensorsCard(
                     val updated = readCurrentBrightness(context)
                     brightnessFloat = updated.first
                     brightnessInt = updated.second
+                    observerChangeTick++
                 }
             }
             brightnessObserver = obs
@@ -365,10 +411,12 @@ fun LightSensorsCard(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-            // Current Screen Brightness Readout Row (% + estimated physical nits, avoiding 255/4095 scale mismatch)
+            // Current Screen Brightness Readout Row (% + real physical nits from dumpsys display calibration)
             ScreenBrightnessRow(
-                brightnessFloat = brightnessFloat,
-                brightnessInt = brightnessInt,
+                fraction = brightnessFraction,
+                resolvedNits = resolvedNits,
+                isExactCalibration = isExactCalibration,
+                hasRealCalibration = displayCalibration?.hasRealCalibration == true,
                 minNit = panelRange.first,
                 maxNit = panelRange.second
             )
@@ -448,35 +496,25 @@ fun LightSensorsCard(
 
 @Composable
 private fun ScreenBrightnessRow(
-    brightnessFloat: Float,
-    brightnessInt: Int,
+    fraction: Float,
+    resolvedNits: Float?,
+    isExactCalibration: Boolean,
+    hasRealCalibration: Boolean,
     minNit: Float,
     maxNit: Float
 ) {
-    val fraction = when {
-        brightnessFloat in 0f..1f -> brightnessFloat
-        brightnessInt >= 0 -> {
-            val scale = if (brightnessInt > 255) {
-                DeviceCompatibility.getMultibrightnessMax(brightnessInt).toFloat()
-            } else {
-                255f
-            }
-            (brightnessInt / scale).coerceIn(0f, 1f)
-        }
-        else -> -1f
-    }
     val pct = if (fraction >= 0f) (fraction * 100f).roundToInt().coerceIn(0, 100) else -1
     val progress = if (fraction >= 0f) fraction.coerceIn(0f, 1f) else 0f
 
     val nitUnit = stringResource(R.string.unit_nits)
-    val valueLabel = if (fraction >= 0f) {
-        val estNits = BrightnessMath.estimateScreenNits(fraction, minNit, maxNit)
-        val nitsText = if (estNits >= 100f) {
-            "${estNits.roundToInt()}"
+    val valueLabel = if (resolvedNits != null) {
+        val nitsText = if (resolvedNits >= 100f) {
+            "${resolvedNits.roundToInt()}"
         } else {
-            String.format(Locale.US, "%.1f", estNits)
+            String.format(Locale.US, "%.1f", resolvedNits)
         }
-        "$pct% (~$nitsText $nitUnit)"
+        val prefix = if (isExactCalibration) "" else "~"
+        if (pct >= 0) "$pct% ($prefix$nitsText $nitUnit)" else "$prefix$nitsText $nitUnit"
     } else {
         stringResource(R.string.sensors_waiting)
     }
@@ -521,6 +559,18 @@ private fun ScreenBrightnessRow(
                 .clip(RoundedCornerShape(3.dp)),
             color = Color(0xFF38BDF8),
             trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
+        )
+
+        Text(
+            text = if (isExactCalibration || hasRealCalibration) {
+                stringResource(R.string.panel_range_calibrated, minNit, maxNit)
+            } else {
+                stringResource(R.string.panel_range_uncalibrated, maxNit)
+            },
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
         )
     }
 }

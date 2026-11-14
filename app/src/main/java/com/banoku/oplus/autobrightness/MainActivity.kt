@@ -105,6 +105,7 @@ import com.banoku.oplus.autobrightness.ui.CurveEditorCard
 import com.banoku.oplus.autobrightness.ui.LightSensorsCard
 import com.banoku.oplus.autobrightness.ui.theme.AutoBrightnessGuardTheme
 import com.banoku.oplus.autobrightness.util.DeviceCompatibility
+import com.banoku.oplus.autobrightness.util.DisplayCalibration
 import com.banoku.oplus.autobrightness.util.GuardStats
 import com.banoku.oplus.autobrightness.util.HookState
 import com.banoku.oplus.autobrightness.util.LocaleHelper
@@ -149,20 +150,41 @@ fun MainAppScreen() {
         val cached = prefs.getString("pref_stock_curve_cache", "").orEmpty()
         mutableStateOf(BrightnessMath.parseNitArray(cached)?.toList())
     }
+    var displayCalibration by remember { mutableStateOf<DisplayCalibration?>(null) }
     var isRefreshingStatus by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    fun applyLogsToRuntimeState(logs: List<LogEntry>) {
+    fun cacheStockCurve(curve: List<Float>) {
+        stockCurveNits = curve
+        prefs.edit().putString(
+            "pref_stock_curve_cache",
+            BrightnessMath.formatNitArray(curve.toFloatArray())
+        ).apply()
+    }
+
+    fun applyLogsToRuntimeState(logs: List<LogEntry>): Boolean {
+        var foundStock = false
         if (logs.isNotEmpty()) {
             stats = RootHelper.computeStats(logs)
             moduleStatus = RootHelper.parseModuleRuntimeStatus(logs, BuildConfig.VERSION_NAME)
             val parsedStock = RootHelper.extractLatestStockCurve(logs)
             if (parsedStock != null) {
-                stockCurveNits = parsedStock
-                prefs.edit().putString(
-                    "pref_stock_curve_cache",
-                    BrightnessMath.formatNitArray(parsedStock.toFloatArray())
-                ).apply()
+                cacheStockCurve(parsedStock)
+                foundStock = true
+            }
+        }
+        return foundStock
+    }
+
+    suspend fun refreshCalibrationAndStock(foundStockInTail: Boolean) {
+        if (!RootHelper.isRootAvailable()) return
+        val cal = RootHelper.readLiveDisplayCalibration()
+        displayCalibration = cal
+        if (!foundStockInTail) {
+            val deepStock = RootHelper.readLatestStockCurveFromLogs()
+            val resolvedStock = deepStock ?: cal.romCurveNits
+            if (resolvedStock != null) {
+                cacheStockCurve(resolvedStock)
             }
         }
     }
@@ -171,7 +193,8 @@ fun MainAppScreen() {
         scope.launch {
             isRefreshingStatus = true
             val logs = RootHelper.readModuleLogs()
-            applyLogsToRuntimeState(logs)
+            val foundStock = applyLogsToRuntimeState(logs)
+            refreshCalibrationAndStock(foundStock)
             isRefreshingStatus = false
         }
     }
@@ -198,7 +221,8 @@ fun MainAppScreen() {
                 }
             }
             val logs = RootHelper.readModuleLogs()
-            applyLogsToRuntimeState(logs)
+            val foundStock = applyLogsToRuntimeState(logs)
+            refreshCalibrationAndStock(foundStock)
         }
         scope.launch {
             isCheckingUpdate = true
@@ -260,7 +284,15 @@ fun MainAppScreen() {
                 moduleStatus = moduleStatus,
                 isRefreshingStatus = isRefreshingStatus,
                 stockCurveNits = stockCurveNits,
-                onRefreshRuntime = { refreshRuntimeState() }
+                displayCalibration = displayCalibration,
+                onRefreshRuntime = { refreshRuntimeState() },
+                onRefreshCalibration = {
+                    scope.launch {
+                        if (RootHelper.isRootAvailable()) {
+                            displayCalibration = RootHelper.readLiveDisplayCalibration()
+                        }
+                    }
+                }
             )
             1 -> SettingsTabContent(modifier = Modifier.padding(innerPadding))
             2 -> LogsTabContent(
@@ -297,11 +329,14 @@ fun OverviewTabContent(
     moduleStatus: ModuleRuntimeStatus,
     isRefreshingStatus: Boolean,
     stockCurveNits: List<Float>?,
-    onRefreshRuntime: () -> Unit
+    displayCalibration: DisplayCalibration?,
+    onRefreshRuntime: () -> Unit,
+    onRefreshCalibration: () -> Unit
 ) {
     val context = LocalContext.current
     var isIconHidden by remember { mutableStateOf(false) }
     var primaryLux by remember { mutableStateOf<Float?>(null) }
+    var liveScreenNit by remember { mutableStateOf<Float?>(null) }
     var hooksExpanded by remember { mutableStateOf(false) }
     val compInfo = remember { DeviceCompatibility.getCompatibilitySummary() }
     val isRoot = remember { RootHelper.isRootAvailable() }
@@ -410,7 +445,10 @@ fun OverviewTabContent(
         item {
             LightSensorsCard(
                 stockCurveNits = stockCurveNits,
-                onPrimaryLuxChanged = { primaryLux = it }
+                displayCalibration = displayCalibration,
+                onPrimaryLuxChanged = { primaryLux = it },
+                onLiveScreenNitChanged = { liveScreenNit = it },
+                onBrightnessChanged = onRefreshCalibration
             )
         }
 
@@ -418,6 +456,8 @@ fun OverviewTabContent(
         item {
             CurveEditorCard(
                 liveLux = primaryLux,
+                liveScreenNit = liveScreenNit,
+                displayMaxNit = displayCalibration?.maxNit,
                 stockCurveNits = stockCurveNits,
                 onRefreshStockCurve = onRefreshRuntime
             )
@@ -2150,7 +2190,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             FaqItem(
                 id = 0,
                 question = "Что нового в версии 1.4.4?",
-                answer = "1. Отключаемый подэкранный датчик PWM (tcs3720 / high_pwm_rgb): теперь на карточке датчиков кнопка ВКЛ/ВЫКЛ есть для всех трёх сенсоров (MAIN, AUX и PWM), а новый перехватчик [10/10] в system_server подавляет события подэкранного датчика на лету без перезагрузки.\n2. Исправлено отображение яркости экрана: убран конфликт шкал 255/4095 — теперь процент считается точно по screen_brightness_float и рядом отображается расчётная яркость в нитах (~нит).\n3. Компактный раздел «Справка»: карточка «История версий (Changelog)» теперь сворачивается и по умолчанию скрыта.",
+                answer = "1. Отключаемый подэкранный датчик PWM (tcs3720 / high_pwm_rgb): теперь на карточке датчиков кнопка ВКЛ/ВЫКЛ есть для всех трёх сенсоров (MAIN, AUX и PWM), а новый перехватчик [10/10] в system_server подавляет события подэкранного датчика на лету без перезагрузки.\n2. Точная калибровка яркости экрана в нитах: убран конфликт шкал 255/4095 и потолок HDR 500 нит — теперь модуль читает реальную аппаратную таблицу панели (mBacklightToNitsSpline / mSpline) и текущие ниты из dumpsys display, синхронизируя карточку датчиков и график кривой.\n3. Компактный раздел «Справка»: карточка «История версий (Changelog)» теперь сворачивается и по умолчанию скрыта.",
                 isExpanded = expandedFaq == 0,
                 onToggle = { expandedFaq = if (expandedFaq == 0) null else 0 }
             )
@@ -2237,7 +2277,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                                     color = Color(0xFF10B981)
                                 )
                                 Text(
-                                    text = "• Отключаемый подэкранный датчик PWM (tcs3720 / high_pwm_rgb): добавлена кнопка ВКЛ/ВЫКЛ и хук [10/10] в SystemSensorManager\$SensorEventQueue.\n• Исправлено отображение яркости экрана: убрана несостыковка 255/4095, процент читается точно, рядом выводится расчётная яркость (~нит).\n• Карточка «История версий (Changelog)» сделана сворачивающейся (свёрнута по умолчанию).",
+                                    text = "• Отключаемый подэкранный датчик PWM (tcs3720 / high_pwm_rgb): добавлена кнопка ВКЛ/ВЫКЛ и хук [10/10] в SystemSensorManager\$SensorEventQueue.\n• Точные ниты из системы: убран конфликт 255/4095 и ложный лимит 500 нит (HDR Average) — яркость и диапазон панели читаются из аппаратных сплайнов dumpsys display и синхронизированы между карточкой датчиков и графиком.\n• Карточка «История версий (Changelog)» сделана сворачивающейся (свёрнута по умолчанию).",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

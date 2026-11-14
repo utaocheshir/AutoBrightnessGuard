@@ -114,4 +114,7 @@
     <string name="os_tag_16_17">COS/OOS 16–17</string>
     <string name="os_tag_17_verified">ColorOS 17 (16+*)</string>
     <string name="os_tag_universal">All 12–17</string>
+    <string name="panel_range_calibrated">Panel: %.1f–%.0f nits (hardware)</string>
+    <string name="panel_range_uncalibrated">Est. ceiling: %.0f nits (no root spline)</string>
+    <string name="curve_screen_now">Screen: %1$s %2$s</string>
 </resources>

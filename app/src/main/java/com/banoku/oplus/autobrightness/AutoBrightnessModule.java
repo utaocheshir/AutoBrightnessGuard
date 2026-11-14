@@ -816,16 +816,17 @@ public class AutoBrightnessModule extends XposedModule {
      * Uses cached CurveConfig so zero heap allocations occur unless the user modifies a slider.
      */
     private final class CustomCurveHook implements XposedInterface.Hooker {
-        private void maybeSampleStockCurve(XposedInterface.Chain chain) {
+        private void maybeSampleStockCurve(XposedInterface.Chain chain, String curveName) {
             long now = SystemClock.elapsedRealtime();
             if (mLastStockSampleMs != 0L && (now - mLastStockSampleMs) < 30_000L) {
                 return;
             }
             mLastStockSampleMs = now;
             try {
+                String safeName = curveName != null ? curveName : "";
                 float[] stock = new float[BrightnessMath.CURVE_POINT_COUNT];
                 for (int i = 0; i < BrightnessMath.CURVE_POINT_COUNT; i++) {
-                    Object res = chain.proceed(new Object[] { "", BrightnessMath.CURVE_ANCHOR_LUX[i] });
+                    Object res = chain.proceed(new Object[] { safeName, BrightnessMath.CURVE_ANCHOR_LUX[i] });
                     if (!(res instanceof Float)) return;
                     float val = (Float) res;
                     if (Float.isNaN(val) || Float.isInfinite(val)) return;
@@ -844,6 +845,8 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 Object arg0 = chain.getArg(0);
                 String name = (arg0 instanceof String) ? (String) arg0 : null;
+                boolean isPrimaryCurve = name != null
+                        && (name.isEmpty() || "default".equalsIgnoreCase(name) || "normal".equalsIgnoreCase(name));
                 if (name != null && name.isEmpty()) {
                     String raw = getPropertyString(PROP_CURVE_CONFIG, "");
                     if (!raw.equals(mLastRawCurve)) {
@@ -861,7 +864,7 @@ public class AutoBrightnessModule extends XposedModule {
                                 customNit = Math.max(customNit, (Float) stockObj);
                             }
                         }
-                        maybeSampleStockCurve(chain);
+                        maybeSampleStockCurve(chain, name);
                         int n = appliedCustomCurve.incrementAndGet();
                         if (n == 1 || (n % 200 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
                             note(Log.INFO, "CURVE override lux=" + lux + " -> " + customNit + " nits (#" + n + ")");
@@ -869,9 +872,13 @@ public class AutoBrightnessModule extends XposedModule {
                         return customNit;
                     } else {
                         Object stockResult = chain.proceed();
-                        maybeSampleStockCurve(chain);
+                        maybeSampleStockCurve(chain, name);
                         return stockResult;
                     }
+                } else if (isPrimaryCurve) {
+                    Object stockResult = chain.proceed();
+                    maybeSampleStockCurve(chain, name);
+                    return stockResult;
                 }
             } catch (Throwable ignored) { }
 

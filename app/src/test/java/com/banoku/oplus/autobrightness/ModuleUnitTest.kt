@@ -184,4 +184,50 @@ class ModuleUnitTest {
         assertNotNull(summary.details)
         assertNotNull(summary.romVersion)
     }
+
+    @Test
+    fun displayCalibrationAndSplineParsingCheck() {
+        val sampleDumpsys = """
+            DISPLAY MANAGER (dumpsys display)
+            DisplayPowerController:
+              mCurrentScreenBrightness=0.5
+              currentSdrNits=420.0
+              mMinNits=2.0
+              mMaxNits=1600.0
+              desiredMaxAverageLuminance=500.0
+              desiredMaxLuminance=1600.0
+              mIsForIdleMode=false
+              mBacklightToNitsSpline=MonotoneCubicSpline{[(0.0, 2.0), (0.5, 420.0), (1.0, 1600.0)]}
+              mDefaultSpline=MonotoneCubicSpline{[(0.0, 8.5), (5.0, 16.0), (25.0, 35.0), (100.0, 95.0), (500.0, 260.0), (2000.0, 650.0), (10000.0, 1400.0)]}
+              mIsForIdleMode=true
+              mBacklightToNitsSpline=MonotoneCubicSpline{[(0.0, 2.0), (1.0, 300.0)]}
+        """.trimIndent()
+
+        val cal = RootHelper.parseDisplayCalibration(sampleDumpsys)
+        assertTrue(cal.hasRealCalibration)
+        assertEquals(2.0f, cal.minNit!!, 0.01f)
+        assertEquals(1600.0f, cal.maxNit!!, 0.01f)
+        assertEquals(420.0f, cal.liveNit!!, 0.01f)
+        assertEquals(0.5f, cal.liveBrightnessFloat!!, 0.001f)
+        assertEquals(3, cal.backlightToNits.size)
+        assertNotNull(cal.romCurveNits)
+        assertEquals(7, cal.romCurveNits!!.size)
+        assertEquals(1400.0f, cal.romCurveNits!![6], 0.1f)
+
+        // Exact spline interpolation at 0.75 -> halfway between 420 and 1600 = 1010
+        val (nits75, exact75) = RootHelper.resolveScreenNits(0.75f, cal, 2f, 500f)
+        assertTrue(exact75)
+        assertEquals(1010.0f, nits75!!, 0.5f)
+
+        // Inverse mNitsToBacklightSpline + desiredMaxAverageLuminance=500 must NOT cap maxNit
+        val inverseDumpsys = """
+            desiredMaxAverageLuminance=500.0
+            mNitsToBacklightSpline=MonotoneCubicSpline{[(2.0, 0.0), (200.0, 0.25), (2400.0, 1.0)]}
+        """.trimIndent()
+        val invCal = RootHelper.parseDisplayCalibration(inverseDumpsys)
+        assertEquals(2400.0f, invCal.maxNit!!, 0.1f)
+        val (nits100, exact100) = RootHelper.resolveScreenNits(1.0f, invCal, 2f, 500f)
+        assertTrue(exact100)
+        assertEquals(2400.0f, nits100!!, 0.5f)
+    }
 }

@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import kotlin.math.abs
 
 object RootHelper {
 
@@ -146,6 +147,298 @@ object RootHelper {
         }
 
         emptyList()
+    }
+
+    suspend fun readLatestStockCurveFromLogs(): List<Float>? = withContext(Dispatchers.IO) {
+        val cmds = listOf(
+            "grep -F 'STOCK_CURVE:' \$(ls -t /data/adb/lspd/log/modules_*.log 2>/dev/null | head -n 1) 2>/dev/null | tail -n 1",
+            "grep -F 'STOCK_CURVE:' /data/adb/lspd/log/modules*.log 2>/dev/null | tail -n 1",
+            "logcat -d -b all -s AutoBrightnessGuard:V 2>/dev/null | grep -F 'STOCK_CURVE:' | tail -n 1"
+        )
+        for (cmd in cmds) {
+            val res = executeSuCommand(cmd)
+            if (res.success && res.output.isNotBlank()) {
+                val parsed = extractLatestStockCurve(parseLogs(res.output))
+                if (parsed != null) return@withContext parsed
+            }
+        }
+        null
+    }
+
+    suspend fun readLiveDisplayCalibration(): DisplayCalibration = withContext(Dispatchers.IO) {
+        val res = executeSuCommand("dumpsys display")
+        if (res.success && res.output.isNotBlank()) {
+            parseDisplayCalibration(res.output)
+        } else {
+            DisplayCalibration()
+        }
+    }
+
+    fun parseSplinePairs(line: String): List<Pair<Float, Float>> {
+        val pairRegex = Regex("\\(\\s*([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)\\s*,\\s*([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)\\s*\\)")
+        val list = ArrayList<Pair<Float, Float>>()
+        for (match in pairRegex.findAll(line)) {
+            val x = match.groupValues[1].toFloatOrNull()
+            val y = match.groupValues[2].toFloatOrNull()
+            if (x != null && y != null && !x.isNaN() && !y.isNaN() && !x.isInfinite() && !y.isInfinite()) {
+                list.add(x to y)
+            }
+        }
+        return list.sortedBy { it.first }
+    }
+
+    private fun parseFloatArrayBracket(line: String): List<Float> {
+        val start = line.indexOf('[')
+        val end = line.indexOf(']', start.coerceAtLeast(0))
+        if (start < 0 || end <= start) return emptyList()
+        return line.substring(start + 1, end)
+            .split(',')
+            .mapNotNull { it.trim().toFloatOrNull() }
+            .filter { !it.isNaN() && !it.isInfinite() }
+    }
+
+    fun interpolateLinearPairs(points: List<Pair<Float, Float>>, x: Float): Float? {
+        if (points.isEmpty() || x.isNaN() || x.isInfinite()) return null
+        if (points.size == 1) return points[0].second
+        if (x <= points.first().first) return points.first().second
+        if (x >= points.last().first) return points.last().second
+        for (i in 0 until points.size - 1) {
+            val (x0, y0) = points[i]
+            val (x1, y1) = points[i + 1]
+            if (x <= x1) {
+                val span = x1 - x0
+                if (span <= 1e-6f) return y1
+                val t = ((x - x0) / span).coerceIn(0f, 1f)
+                return y0 + t * (y1 - y0)
+            }
+        }
+        return points.last().second
+    }
+
+    fun parseDisplayCalibration(dumpsysOutput: String): DisplayCalibration {
+        if (dumpsysOutput.isBlank()) return DisplayCalibration()
+
+        var backlightToNits: List<Pair<Float, Float>> = emptyList()
+        var invertedNitsToBacklight: List<Pair<Float, Float>> = emptyList()
+        var activeLuxCurvePairs: List<Pair<Float, Float>> = emptyList()
+        var defaultLuxCurvePairs: List<Pair<Float, Float>> = emptyList()
+        var normalizedLuxPairs: List<Pair<Float, Float>> = emptyList()
+
+        var pendingConfigNits: List<Float> = emptyList()
+        var pendingConfigBacklight: List<Float> = emptyList()
+
+        var liveNit: Float? = null
+        var liveBrightnessFloat: Float? = null
+        var minNit: Float? = null
+        var maxNit: Float? = null
+        var inIdleMode = false
+
+        val liveNitRegex = Regex(
+            "(?<![A-Za-z0-9_])(mCurrentScreenBrightnessNits|mCurrentBrightnessNits|currentSdrNits|mCurrentNits|mCurrentNit|currentNits|currentNit|mScreenBrightnessNits|mTargetNit|sdrNits|mNit)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+        val liveBrightnessRegex = Regex(
+            "(?<![A-Za-z0-9_])(mCurrentScreenBrightness|mScreenBrightness|screenBrightness)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+        val minNitRegex = Regex(
+            "(?<![A-Za-z0-9_])(mMinNits|minNits|mNormalMinNits|desiredMinLuminance)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+        val maxNitRegex = Regex(
+            "(?<![A-Za-z0-9_])(mHbmMaxNits|mMaxNits|maxNits|mNormalMaxNits|mBrightnessMaxNit|desiredMaxLuminance)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+
+        for (rawLine in dumpsysOutput.lineSequence()) {
+            val line = rawLine.trim()
+            if (line.isEmpty()) continue
+            val lower = line.lowercase()
+
+            if (lower.contains("misforidlemode=true")) {
+                inIdleMode = true
+            } else if (lower.contains("misforidlemode=false") || lower.startsWith("displaypowercontroller")) {
+                inIdleMode = false
+            }
+
+            if (line.contains("Spline{") || line.contains("[(")) {
+                val pairs = parseSplinePairs(line)
+                if (pairs.size >= 2) {
+                    val lastX = pairs.last().first
+                    val lastY = pairs.last().second
+                    when {
+                        !inIdleMode && (lower.contains("backlighttonits") || lower.contains("brightnesstonits")) &&
+                            !lower.contains("ambient") && !lower.contains("lux") &&
+                            lastX in 0.5f..1.05f && lastY >= 50f -> {
+                            if (pairs.size > backlightToNits.size) {
+                                backlightToNits = pairs
+                            }
+                        }
+                        !inIdleMode && (lower.contains("nitstobacklight") || lower.contains("nitstobrightness")) &&
+                            lastX >= 50f && lastY in 0.5f..1.05f -> {
+                            val inverted = pairs.map { (n, b) -> b to n }.sortedBy { it.first }
+                            if (inverted.size > invertedNitsToBacklight.size) {
+                                invertedNitsToBacklight = inverted
+                            }
+                        }
+                        !inIdleMode && lastX >= 500f && lastY >= 20f &&
+                            !lower.contains("nitstobacklight") && !lower.contains("nitstobrightness") -> {
+                            when {
+                                lower.contains("mdefaultspline") || lower.contains("defaultspline") -> {
+                                    if (defaultLuxCurvePairs.isEmpty()) defaultLuxCurvePairs = pairs
+                                }
+                                lower.contains("mspline") || lower.contains("luxtonits") ||
+                                    lower.contains("autobrightness") || lower.contains("curve") -> {
+                                    if (activeLuxCurvePairs.isEmpty()) activeLuxCurvePairs = pairs
+                                }
+                            }
+                        }
+                        !inIdleMode && lastX >= 500f && lastY in 0.05f..1.05f &&
+                            (lower.contains("mspline") || lower.contains("mdefaultspline")) -> {
+                            if (normalizedLuxPairs.isEmpty()) normalizedLuxPairs = pairs
+                        }
+                    }
+                }
+            }
+
+            if (pendingConfigNits.isEmpty() && (lower.startsWith("mnits=[") || lower.startsWith("nits=["))) {
+                val parsed = parseFloatArrayBracket(line)
+                if (parsed.size >= 2 && (parsed.lastOrNull() ?: 0f) >= 50f) {
+                    pendingConfigNits = parsed
+                }
+            } else if (pendingConfigBacklight.isEmpty() &&
+                (lower.startsWith("mbacklight=[") || lower.startsWith("mbrightness=[") || lower.startsWith("backlight=["))
+            ) {
+                val parsed = parseFloatArrayBracket(line)
+                if (parsed.size >= 2 && (parsed.lastOrNull() ?: 0f) in 0.5f..1.05f) {
+                    pendingConfigBacklight = parsed
+                }
+            }
+
+            if (lower.contains("mnitsrange=[") || lower.contains("nitsrange=[")) {
+                val range = parseFloatArrayBracket(line)
+                if (range.size == 2) {
+                    if (minNit == null && range[0] in 0.5f..50f) minNit = range[0]
+                    if (range[1] in 200f..6000f) maxNit = maxOf(maxNit ?: 0f, range[1])
+                }
+            }
+
+            val nitMatch = liveNitRegex.find(line)
+            if (nitMatch != null) {
+                val v = nitMatch.groupValues[2].toFloatOrNull()
+                if (v != null && v in 0f..6000f && (liveNit == null || (liveNit == 0f && v > 0f))) {
+                    liveNit = v
+                }
+            }
+
+            val blMatch = liveBrightnessRegex.find(line)
+            if (blMatch != null && liveBrightnessFloat == null) {
+                val v = blMatch.groupValues[2].toFloatOrNull()
+                if (v != null && v in 0f..1f) {
+                    liveBrightnessFloat = v
+                }
+            }
+
+            val minMatch = minNitRegex.find(line)
+            if (minMatch != null && minNit == null) {
+                val v = minMatch.groupValues[2].toFloatOrNull()
+                if (v != null && v in 0.5f..50f) {
+                    minNit = v
+                }
+            }
+
+            val maxMatch = maxNitRegex.find(line)
+            if (maxMatch != null) {
+                val v = maxMatch.groupValues[2].toFloatOrNull()
+                if (v != null && v in 200f..6000f) {
+                    maxNit = maxOf(maxNit ?: 0f, v)
+                }
+            }
+        }
+
+        val resolvedBacklightSpline = when {
+            backlightToNits.isNotEmpty() -> backlightToNits
+            invertedNitsToBacklight.isNotEmpty() -> invertedNitsToBacklight
+            pendingConfigNits.isNotEmpty() && pendingConfigNits.size == pendingConfigBacklight.size ->
+                pendingConfigBacklight.zip(pendingConfigNits).sortedBy { it.first }
+            else -> emptyList()
+        }
+
+        val effectiveMinNit = resolvedBacklightSpline.firstOrNull()?.second?.takeIf { it in 0.1f..50f } ?: minNit
+        val effectiveMaxNit = resolvedBacklightSpline.lastOrNull()?.second?.takeIf { it >= 100f } ?: maxNit
+
+        if (liveNit == null && liveBrightnessFloat != null && resolvedBacklightSpline.isNotEmpty()) {
+            liveNit = interpolateLinearPairs(resolvedBacklightSpline, liveBrightnessFloat)
+        }
+
+        val chosenLuxCurvePairs = when {
+            activeLuxCurvePairs.isNotEmpty() -> activeLuxCurvePairs
+            defaultLuxCurvePairs.isNotEmpty() -> defaultLuxCurvePairs
+            normalizedLuxPairs.isNotEmpty() && resolvedBacklightSpline.isNotEmpty() ->
+                normalizedLuxPairs.mapNotNull { (lx, bl) ->
+                    val n = interpolateLinearPairs(resolvedBacklightSpline, bl) ?: return@mapNotNull null
+                    lx to n
+                }
+            else -> emptyList()
+        }
+
+        val romCurveNits = if (chosenLuxCurvePairs.size >= 2) {
+            val sampled = FloatArray(com.banoku.oplus.autobrightness.BrightnessMath.CURVE_POINT_COUNT) { idx ->
+                val anchorLux = com.banoku.oplus.autobrightness.BrightnessMath.CURVE_ANCHOR_LUX[idx]
+                interpolateLinearPairs(chosenLuxCurvePairs, anchorLux)
+                    ?: com.banoku.oplus.autobrightness.BrightnessMath.DEFAULT_CURVE_NITS[idx]
+            }
+            com.banoku.oplus.autobrightness.BrightnessMath.enforceMonotonic(sampled).toList()
+        } else {
+            null
+        }
+
+        return DisplayCalibration(
+            liveNit = liveNit,
+            liveBrightnessFloat = liveBrightnessFloat,
+            minNit = effectiveMinNit,
+            maxNit = effectiveMaxNit,
+            backlightToNits = resolvedBacklightSpline,
+            romCurveNits = romCurveNits
+        )
+    }
+
+    /**
+     * Resolves physical screen brightness in nits and whether it came from real system/panel calibration.
+     */
+    fun resolveScreenNits(
+        fraction: Float,
+        calibration: DisplayCalibration?,
+        fallbackMinNit: Float,
+        fallbackMaxNit: Float
+    ): Pair<Float?, Boolean> {
+        if (fraction < 0f || fraction.isNaN() || fraction.isInfinite()) {
+            val live = calibration?.liveNit
+            return if (live != null && live >= 0f) live to true else null to false
+        }
+        if (fraction <= 0f) {
+            val exact = calibration != null && (calibration.backlightToNits.isNotEmpty() || calibration.liveNit != null)
+            return 0f to exact
+        }
+        if (calibration != null && calibration.backlightToNits.isNotEmpty()) {
+            val mapped = interpolateLinearPairs(calibration.backlightToNits, fraction)
+            if (mapped != null && mapped >= 0f) {
+                return mapped to true
+            }
+        }
+        val live = calibration?.liveNit
+        val calBl = calibration?.liveBrightnessFloat
+        if (live != null && live >= 0f && (calBl == null || abs(calBl - fraction) <= 0.025f)) {
+            return live to true
+        }
+        val effectiveMin = calibration?.minNit ?: fallbackMinNit
+        val effectiveMax = calibration?.maxNit ?: fallbackMaxNit
+        val hasBounds = calibration?.maxNit != null
+        return com.banoku.oplus.autobrightness.BrightnessMath.estimateScreenNits(
+            fraction,
+            effectiveMin,
+            effectiveMax
+        ) to hasBounds
     }
 
     fun getSampleSimulationLogs(): List<LogEntry> {
@@ -513,3 +806,15 @@ data class ModuleRuntimeStatus(
     val totalCount: Int,
     val hooks: List<HookStatusItem>
 )
+
+data class DisplayCalibration(
+    val liveNit: Float? = null,
+    val liveBrightnessFloat: Float? = null,
+    val minNit: Float? = null,
+    val maxNit: Float? = null,
+    val backlightToNits: List<Pair<Float, Float>> = emptyList(),
+    val romCurveNits: List<Float>? = null
+) {
+    val hasRealCalibration: Boolean
+        get() = backlightToNits.isNotEmpty() || liveNit != null || maxNit != null
+}
