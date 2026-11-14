@@ -1,6 +1,7 @@
 package com.banoku.oplus.autobrightness;
 
 import android.os.Build;
+import android.os.SystemClock;
 import android.util.Log;
 
 import io.github.libxposed.api.XposedInterface;
@@ -43,7 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AutoBrightnessModule extends XposedModule {
 
     public static final String TAG = "AutoBrightnessGuard";
-    public static final String VERSION = "1.4.2";
+    public static final String VERSION = "1.4.3";
 
     // Legacy toggles (SystemProperties)
     public static final String PROP_BLOCK_RESET = "persist.autobrightness.block_reset";
@@ -121,6 +122,8 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile BrightnessMath.CurveConfig mCachedCurveConfig =
             new BrightnessMath.CurveConfig(false, BrightnessMath.copyDefaults());
     private volatile float mLastAuxEmaLux = Float.NaN;
+    private volatile long mLastStockSampleMs = 0L;
+    private volatile String mLastStockCurve = "";
 
     private volatile Method mLuxIsResetForceUpdate;
     private volatile Method mBuilderIsAutoMode;
@@ -143,32 +146,50 @@ public class AutoBrightnessModule extends XposedModule {
         initReflectionCaches(cl);
 
         // 1. Curve Reset Guard (0-arg AND 1-arg resetAutoBrightness for ColorOS 17 DragOpt)
-        hookControllerReset(cl);
+        boolean h1 = hookControllerReset(cl);
 
         // 2. Ambient Adapter Guard (resetAmbientAdapter)
-        hookAmbientReset(cl);
+        boolean h2 = hookAmbientReset(cl);
 
         // 3. Anti-Drift Stability Guard (handleStableForceChange & handleSmallChangeAnimating)
-        hookStabilityAntiDrift(cl);
+        boolean h3 = hookStabilityAntiDrift(cl);
 
         // 4. Debounce Window Lock (StabilityProcess.getAccelerateScale)
-        hookDebounceAccelerateScale(cl);
+        boolean h4 = hookDebounceAccelerateScale(cl);
 
         // 5. Night Reading / Manual Unconditional Nit Floor & 20-min Dark-Env Dimming Guard
-        hookDarkEnvGuard(cl);
-        hookNitFloor(cl);
+        boolean h5a = hookDarkEnvGuard(cl);
+        boolean h5b = hookNitFloor(cl);
 
         // 6. Per-App Smart Dimming Bypass (OplusFeatureReduceBrightness.isReduceDisabled)
-        hookSmartDimmingBypass(cl);
+        boolean h6 = hookSmartDimmingBypass(cl);
 
         // 7. Dual 360° Aux Sensor Balancer (LuxEvent$LuxEventResult.calculateAuxLux)
-        hookDualSensorAux(cl);
+        boolean h7 = hookDualSensorAux(cl);
 
         // 8. Hysteresis Dead-Zone Widener (StabilityProcess.getLargeChangeLimit(float))
-        hookHysteresisLimits(cl);
+        boolean h8 = hookHysteresisLimits(cl);
 
         // 9. Live Custom Curve Override (OplusDisplayBrightnessModel.getValueByCurve)
-        hookCustomBrightnessCurve(cl);
+        boolean h9 = hookCustomBrightnessCurve(cl);
+
+        boolean[] statusArr = new boolean[] { h1, h2, h3, h4, (h5a && h5b), h6, h7, h8, h9 };
+        int okCount = 0;
+        StringBuilder summary = new StringBuilder();
+        for (int i = 0; i < statusArr.length; i++) {
+            if (statusArr[i]) okCount++;
+            if (i > 0) summary.append(',');
+            summary.append(i + 1).append(':').append(statusArr[i] ? "OK" : "SKIP");
+        }
+        note(Log.INFO, "HOOK_SUMMARY:installed=" + okCount + "/9,version=" + VERSION
+                + ",sdk=" + Build.VERSION.SDK_INT + ",hooks=" + summary);
+
+        // Log whether custom curve is active immediately on boot
+        String bootCurve = getPropertyString(PROP_CURVE_CONFIG, "");
+        if (!bootCurve.isEmpty()) {
+            BrightnessMath.CurveConfig parsedBoot = BrightnessMath.parseCurveConfig(bootCurve);
+            note(Log.INFO, "Boot custom curve state: enabled=" + parsedBoot.enabled + " raw=" + bootCurve);
+        }
     }
 
     private void initReflectionCaches(ClassLoader cl) {
@@ -210,7 +231,7 @@ public class AutoBrightnessModule extends XposedModule {
         }
     }
 
-    private void hookControllerReset(ClassLoader cl) {
+    private boolean hookControllerReset(ClassLoader cl) {
         try {
             Class<?> controller = Class.forName(TARGET_CLASS, false, cl);
             Method alarmLambda = findOptional(controller, ALARM_LAMBDA);
@@ -237,26 +258,30 @@ public class AutoBrightnessModule extends XposedModule {
                 note(Log.INFO, "resetAutoBrightness(int) skipped: " + t.getMessage());
             }
 
-            note(Log.INFO, "Hook [1/7] controller resetAutoBrightness installed (variants=" + hooked
+            note(Log.INFO, "Hook [1/9] controller resetAutoBrightness installed (variants=" + hooked
                     + ", lambda=" + (alarmLambda != null) + ")");
+            return hooked > 0;
         } catch (Throwable t) {
-            note(Log.WARN, "Hook [1/7] controller skipped: " + t.getMessage());
+            note(Log.WARN, "Hook [1/9] controller skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookAmbientReset(ClassLoader cl) {
+    private boolean hookAmbientReset(ClassLoader cl) {
         try {
             Class<?> ambientAdapter = Class.forName(AMBIENT_CLASS, false, cl);
             Method resetAmbient = ambientAdapter.getDeclaredMethod(RESET_AMBIENT_METHOD, String.class);
             deoptimize(resetAmbient);
             hook(resetAmbient).setId("guard-ambient-reset").intercept(new AmbientAdapterGuard());
-            note(Log.INFO, "Hook [2/7] ambient resetAmbientAdapter(String) installed");
+            note(Log.INFO, "Hook [2/9] ambient resetAmbientAdapter(String) installed");
+            return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [2/7] ambient reset skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [2/9] ambient reset skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookStabilityAntiDrift(ClassLoader cl) {
+    private boolean hookStabilityAntiDrift(ClassLoader cl) {
         try {
             Class<?> ambientAdapter = Class.forName(AMBIENT_CLASS, false, cl);
             Class<?> luxResultCls = Class.forName(LUX_RESULT_CLASS, false, cl);
@@ -280,13 +305,15 @@ public class AutoBrightnessModule extends XposedModule {
                 note(Log.INFO, "handleSmallChangeAnimating skipped: " + t.getMessage());
             }
 
-            note(Log.INFO, "Hook [3/7] stability anti-drift installed (targets=" + installed + ")");
+            note(Log.INFO, "Hook [3/9] stability anti-drift installed (targets=" + installed + ")");
+            return installed > 0;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [3/7] stability anti-drift skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [3/9] stability anti-drift skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookDebounceAccelerateScale(ClassLoader cl) {
+    private boolean hookDebounceAccelerateScale(ClassLoader cl) {
         try {
             Class<?> stabilityCls = Class.forName(STABILITY_PROCESS_CLASS, false, cl);
             int installed = 0;
@@ -313,63 +340,73 @@ public class AutoBrightnessModule extends XposedModule {
                 installed++;
             } catch (Throwable ignored) { }
 
-            note(Log.INFO, "Hook [4/7] StabilityProcess.getAccelerateScale installed (overloads=" + installed + ")");
+            note(Log.INFO, "Hook [4/9] StabilityProcess.getAccelerateScale installed (overloads=" + installed + ")");
+            return installed > 0;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [4/7] StabilityProcess skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [4/9] StabilityProcess skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookDarkEnvGuard(ClassLoader cl) {
+    private boolean hookDarkEnvGuard(ClassLoader cl) {
         try {
             Class<?> darkEnvCls = Class.forName(DARK_ENV_FEATURE_CLASS, false, cl);
             Class<?> builderCls = Class.forName(STATE_BUILDER_CLASS, false, cl);
             Method shouldSkip = darkEnvCls.getDeclaredMethod("shouldSkipProcessing", builderCls);
             deoptimize(shouldSkip);
             hook(shouldSkip).setId("guard-dark-env-skip").intercept(new DarkEnvSkipHook());
-            note(Log.INFO, "Hook [5a/7] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed");
+            note(Log.INFO, "Hook [5a/9] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed");
+            return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [5a/7] DarkEnv guard skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [5a/9] DarkEnv guard skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookNitFloor(ClassLoader cl) {
+    private boolean hookNitFloor(ClassLoader cl) {
         try {
             Class<?> ppmCls = Class.forName(POST_PROCESS_MANAGER_CLASS, false, cl);
             Class<?> builderCls = Class.forName(STATE_BUILDER_CLASS, false, cl);
             Method convertNit = ppmCls.getDeclaredMethod("convertNitToBrightness", builderCls);
             deoptimize(convertNit);
             hook(convertNit).setId("guard-nit-floor").intercept(new NightNitFloorHook());
-            note(Log.INFO, "Hook [5b/7] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (" + NIGHT_MIN_FLOOR_NITS + " nits) installed");
+            note(Log.INFO, "Hook [5b/9] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (" + NIGHT_MIN_FLOOR_NITS + " nits) installed");
+            return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [5b/7] Nit floor skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [5b/9] Nit floor skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookSmartDimmingBypass(ClassLoader cl) {
+    private boolean hookSmartDimmingBypass(ClassLoader cl) {
         try {
             Class<?> reduceCls = Class.forName(REDUCE_BRIGHTNESS_FEATURE_CLASS, false, cl);
             Method isDisabled = reduceCls.getDeclaredMethod("isReduceDisabled");
             deoptimize(isDisabled);
             hook(isDisabled).setId("guard-smart-dimming-bypass").intercept(new SmartDimmingBypassHook());
-            note(Log.INFO, "Hook [6/7] OplusFeatureReduceBrightness.isReduceDisabled installed");
+            note(Log.INFO, "Hook [6/9] OplusFeatureReduceBrightness.isReduceDisabled installed");
+            return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [6/7] Smart dimming bypass skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [6/9] Smart dimming bypass skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookDualSensorAux(ClassLoader cl) {
+    private boolean hookDualSensorAux(ClassLoader cl) {
         try {
             Class<?> luxEventResultCls = Class.forName(LUX_EVENT_RESULT_CLASS, false, cl);
             Method calcAux = luxEventResultCls.getDeclaredMethod("calculateAuxLux", float.class, float.class);
             deoptimize(calcAux);
             hook(calcAux).setId("guard-dual-aux-balance").intercept(new DualSensorAuxHook());
             note(Log.INFO, "Hook [7/9] LuxEvent$LuxEventResult.calculateAuxLux balancer installed");
+            return true;
         } catch (Throwable t) {
             note(Log.INFO, "Hook [7/9] Dual sensor balancer skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookHysteresisLimits(ClassLoader cl) {
+    private boolean hookHysteresisLimits(ClassLoader cl) {
         try {
             Class<?> stabilityCls = Class.forName(STABILITY_PROCESS_CLASS, false, cl);
             int installed = 0;
@@ -391,20 +428,24 @@ public class AutoBrightnessModule extends XposedModule {
             } catch (Throwable ignored) { }
 
             note(Log.INFO, "Hook [8/9] StabilityProcess hysteresis widener installed (targets=" + installed + ")");
+            return installed > 0;
         } catch (Throwable t) {
             note(Log.INFO, "Hook [8/9] Hysteresis widener skipped: " + t.getMessage());
+            return false;
         }
     }
 
-    private void hookCustomBrightnessCurve(ClassLoader cl) {
+    private boolean hookCustomBrightnessCurve(ClassLoader cl) {
         try {
             Class<?> modelCls = Class.forName(BRIGHTNESS_MODEL_CLASS, false, cl);
             Method getVal = modelCls.getDeclaredMethod("getValueByCurve", String.class, float.class);
             deoptimize(getVal);
             hook(getVal).setId("guard-live-custom-curve").intercept(new CustomCurveHook());
             note(Log.INFO, "Hook [9/9] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed");
+            return true;
         } catch (Throwable t) {
             note(Log.INFO, "Hook [9/9] Live custom curve skipped: " + t.getMessage());
+            return false;
         }
     }
 
@@ -742,6 +783,29 @@ public class AutoBrightnessModule extends XposedModule {
      * Uses cached CurveConfig so zero heap allocations occur unless the user modifies a slider.
      */
     private final class CustomCurveHook implements XposedInterface.Hooker {
+        private void maybeSampleStockCurve(XposedInterface.Chain chain) {
+            long now = SystemClock.elapsedRealtime();
+            if (mLastStockSampleMs != 0L && (now - mLastStockSampleMs) < 30_000L) {
+                return;
+            }
+            mLastStockSampleMs = now;
+            try {
+                float[] stock = new float[BrightnessMath.CURVE_POINT_COUNT];
+                for (int i = 0; i < BrightnessMath.CURVE_POINT_COUNT; i++) {
+                    Object res = chain.proceed(new Object[] { "", BrightnessMath.CURVE_ANCHOR_LUX[i] });
+                    if (!(res instanceof Float)) return;
+                    float val = (Float) res;
+                    if (Float.isNaN(val) || Float.isInfinite(val)) return;
+                    stock[i] = val;
+                }
+                String encoded = BrightnessMath.formatNitArray(stock);
+                if (!encoded.isEmpty() && !encoded.equals(mLastStockCurve)) {
+                    mLastStockCurve = encoded;
+                    note(Log.INFO, "STOCK_CURVE:" + encoded);
+                }
+            } catch (Throwable ignored) { }
+        }
+
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
             try {
@@ -764,11 +828,16 @@ public class AutoBrightnessModule extends XposedModule {
                                 customNit = Math.max(customNit, (Float) stockObj);
                             }
                         }
+                        maybeSampleStockCurve(chain);
                         int n = appliedCustomCurve.incrementAndGet();
                         if (n == 1 || (n % 200 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
                             note(Log.INFO, "CURVE override lux=" + lux + " -> " + customNit + " nits (#" + n + ")");
                         }
                         return customNit;
+                    } else {
+                        Object stockResult = chain.proceed();
+                        maybeSampleStockCurve(chain);
+                        return stockResult;
                     }
                 }
             } catch (Throwable ignored) { }

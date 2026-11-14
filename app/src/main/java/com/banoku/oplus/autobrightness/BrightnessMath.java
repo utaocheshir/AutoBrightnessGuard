@@ -213,6 +213,47 @@ public final class BrightnessMath {
         return nitValues[last];
     }
 
+    public static String formatNitArray(float[] nits) {
+        if (nits == null || nits.length != CURVE_POINT_COUNT) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < CURVE_POINT_COUNT; i++) {
+            if (i > 0) sb.append(',');
+            float v = clamp(nits[i], MIN_CURVE_NIT, MAX_CURVE_NIT);
+            float rounded = Math.round(v * 10f) / 10f;
+            if (Math.abs(rounded - Math.round(rounded)) < 0.05f) {
+                sb.append(Math.round(rounded));
+            } else {
+                sb.append(String.format(Locale.US, "%.1f", rounded));
+            }
+        }
+        return sb.toString();
+    }
+
+    public static float[] parseNitArray(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return null;
+        }
+        String[] parts = raw.trim().split(",");
+        if (parts.length != CURVE_POINT_COUNT) {
+            return null;
+        }
+        float[] parsed = new float[CURVE_POINT_COUNT];
+        for (int i = 0; i < CURVE_POINT_COUNT; i++) {
+            try {
+                float val = Float.parseFloat(parts[i].trim());
+                if (Float.isNaN(val) || Float.isInfinite(val)) {
+                    return null;
+                }
+                parsed[i] = clamp(val, 0f, MAX_CURVE_NIT);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return parsed;
+    }
+
     public static float[] copyDefaults() {
         float[] copy = new float[CURVE_POINT_COUNT];
         System.arraycopy(DEFAULT_CURVE_NITS, 0, copy, 0, CURVE_POINT_COUNT);

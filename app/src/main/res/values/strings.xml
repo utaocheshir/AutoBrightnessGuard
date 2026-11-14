@@ -87,4 +87,31 @@
     <string name="pref_hysteresis_title">Ambient Lux Hysteresis Damping</string>
     <string name="pref_hysteresis_desc">Widens StabilityProcess.getLargeChangeLimit() dead-zone bounds so minor room light changes do not pump brightness.</string>
     <string name="pref_hysteresis_value">Dead-zone scale: %.1fx</string>
+
+    <string name="sensor_monitor_badge">MONITOR</string>
+    <string name="curve_default_profile_name">Custom 1</string>
+    <string name="curve_new_profile_title">New Curve Profile</string>
+    <string name="curve_rename_profile_title">Rename Profile</string>
+    <string name="curve_profile_name_hint">Profile name</string>
+    <string name="curve_new_profile_short">New</string>
+    <string name="curve_delete_profile">Delete profile</string>
+    <string name="curve_export_short">Export</string>
+    <string name="curve_import_short">Import</string>
+    <string name="curve_exported_toast">Profiles exported to JSON</string>
+    <string name="curve_imported_toast">Imported profiles: %d</string>
+    <string name="curve_import_error">Invalid JSON curve file</string>
+    <string name="curve_badge_stock_live">STOCK ROM (LIVE)</string>
+    <string name="curve_copy_stock">Copy ROM Curve to Profile</string>
+    <string name="curve_stock_copied_toast">Stock ROM curve copied to profile</string>
+    <string name="curve_stock_waiting_hint">Waiting for system_server stock curve sample (change light or tap ↻)</string>
+    <string name="curve_refresh_stock">Refresh ROM curve</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="soft_reboot_btn">Soft Reboot</string>
+    <string name="soft_reboot_dialog_title">Restart system_server?</string>
+    <string name="soft_reboot_dialog_desc">The screen will briefly turn off for ~5 seconds and open apps will close. Kernel and data remain untouched.</string>
+    <string name="os_tag_12_17">OOS/COS 12–17</string>
+    <string name="os_tag_16_17">COS/OOS 16–17</string>
+    <string name="os_tag_17_verified">ColorOS 17 (16+*)</string>
+    <string name="os_tag_universal">All 12–17</string>
 </resources>

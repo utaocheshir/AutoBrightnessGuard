@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.4.2-blue.svg" alt="Release" /></a>
+  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.4.3-blue.svg" alt="Release" /></a>
   <a href="https://github.com/libxposed"><img src="https://img.shields.io/badge/LibXposed-API%20102-orange.svg" alt="LibXposed API 102" /></a>
   <a href="https://github.com/utaocheshir/AutoBrightnessGuard"><img src="https://img.shields.io/badge/Target-OnePlus%20%7C%20OxygenOS%20%7C%20ColorOS-green.svg" alt="Platform" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg" alt="License" /></a>
@@ -39,11 +39,11 @@ In OxygenOS and ColorOS 12–17:
 - **Instant SystemProperties IPC:** Settings apply immediately via `persist.autobrightness.*` without restarting `system_server`.
 
 ### ✨ Companion App Features
-- **Overview:** Displays module readiness, device compatibility check (OnePlus/OPPO/Realme, Android & API level), and a launcher icon hide/show toggle.
-- **Settings (v1.2b):** Independent toggles for brightness reset guard, ambient adapter guard, strict alarm rule, and verbose debugging.
-- **Live Logcat:** Built-in log viewer using root (`su`) with color-coded tags (`BLOCKED`, `HOOKED`, `PASS`).
-- **Tools & Updates:** Single-tap LSPosed Manager launcher, one-click GitHub release updater with direct APK downloader, terminal commands, and 4PDA/GitHub diagnostic report generator.
-- **FAQ:** Comprehensive explanation of the underlying OxygenOS quirk.
+- **Overview (v1.4.3):** Live 9/9 hook verification card (shows which methods were found & hooked inside `system_server` + hit counts), calibrated light sensors (`MAIN` / `AUX` toggleable, `tcs3720` PWM monitor), live screen brightness (`sys.oplus.multibrightness`), and real ColorOS / OxygenOS / device compatibility details.
+- **Multi-Profile Curve Editor (v1.4.3):** Save, switch, rename, and export/import custom nit curves (`.json`), or inspect the live stock ROM curve (`getValueByCurve`) directly on the chart.
+- **Settings:** Instant `SystemProperties` toggles with OS version badges (`OOS/COS 12–17`, `COS/OOS 16–17`, `ColorOS 17`).
+- **Live Logcat & Tools:** Built-in root log viewer (`BLOCKED`, `HOOK`, `PASS`), Soft Reboot button (`killall system_server`), one-click GitHub updater, and 4PDA/GitHub diagnostic report generator.
+- **FAQ:** Up-to-date technical breakdown for ColorOS/OxygenOS 12–17.
 
 ### 🚀 Installation
 1. Download the latest APK from the [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases) page.
@@ -87,11 +87,11 @@ Expected output upon successful block:
 - **Настройки на лету:** переключатели применяются мгновенно через `SystemProperties` (`persist.autobrightness.*`).
 
 ### ✨ Возможности приложения-компаньона
-- **Обзор:** статус работы, проверка совместимости устройства и переключатель скрытия ярлыка в лаунчере.
-- **Настройки (1.2b):** раздельное включение блокировок яркости, адаптера света, строгий режим Alarm и подробный логкат.
-- **Логи (Live Logcat):** встроенное чтение системного журнала модуля из `logcat` через Root (`su`) с цветовой индикацией.
-- **Инструменты и Обновления:** запуск LSPosed Manager в 1 клик, проверка и скачивание обновлений с GitHub, быстрые команды терминала и генератор отчётов для 4PDA.
-- **Справка:** подробный технический разбор бага и ответы на частые вопросы.
+- **Обзор (1.4.3):** живая верификация всех 9 хуков в `system_server` (статус и число срабатываний), раздельные датчики света (`MAIN`, `AUX`, `tcs3720 PWM-монитор`), точный % яркости по `sys.oplus.multibrightness` и реальные данные о прошивке/модели.
+- **Редактор профилей кривой (1.4.3):** несколько сохраняемых профилей с экспортом/импортом в JSON, отображение реальной штатной кривой ROM и кнопка копирования штатной кривой в профиль.
+- **Настройки:** мгновенные переключатели через `SystemProperties` с пометками актуальности для версий прошивки (12–17 / 16–17 / 17).
+- **Логи и Инструменты:** чтение логов LSPosed/logcat, кнопка **Soft Reboot**, обновление с GitHub в 1 клик и генератор диагностических отчётов.
+- **Справка:** актуальное описание работы всех модулей версии 1.4.3.
 
 ### 🚀 Установка
 1. Скачайте APK со страницы [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases).
@@ -180,6 +180,6 @@ The output APK will be generated at `app/build/outputs/apk/debug/app-debug.apk`.
 ---
 
 ## 📄 License & Credits
-- **Authors:** Banoku & utaocheshir
+- **Author:** Banoku
 - **Framework:** [LibXposed](https://github.com/libxposed) (API 102), Jetpack Compose
 - **License:** Apache License 2.0 (Open Source)

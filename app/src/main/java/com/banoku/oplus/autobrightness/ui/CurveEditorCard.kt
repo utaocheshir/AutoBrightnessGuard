@@ -2,37 +2,53 @@ package com.banoku.oplus.autobrightness.ui
 
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -61,6 +77,8 @@ import androidx.compose.ui.unit.sp
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
 import com.banoku.oplus.autobrightness.BrightnessMath
 import com.banoku.oplus.autobrightness.R
+import com.banoku.oplus.autobrightness.util.CurveProfile
+import com.banoku.oplus.autobrightness.util.CurveProfileRepository
 import com.banoku.oplus.autobrightness.util.RootHelper
 import kotlinx.coroutines.launch
 import kotlin.math.ln
@@ -73,28 +91,67 @@ private val CURVE_POINT_MAX_NITS = listOf(250f, 350f, 600f, 1000f, 1600f, 2400f,
 @Composable
 fun CurveEditorCard(
     modifier: Modifier = Modifier,
-    liveLux: Float? = null
+    liveLux: Float? = null,
+    stockCurveNits: List<Float>? = null,
+    onRefreshStockCurve: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
 
-    val initialConfig = remember {
+    val defaultProfileName = stringResource(R.string.curve_default_profile_name)
+    val initialStore = remember {
+        CurveProfileRepository.loadStore(prefs, defaultProfileName)
+    }
+    val initialEnabled = remember {
         val saved = prefs.getString("pref_curve_config", "") ?: ""
-        BrightnessMath.parseCurveConfig(saved)
+        BrightnessMath.parseCurveConfig(saved).enabled
     }
 
-    var curveEnabled by remember { mutableStateOf(initialConfig.enabled) }
-    var nitPoints by remember { mutableStateOf(initialConfig.nits.toList()) }
+    var profiles by remember { mutableStateOf(initialStore.profiles) }
+    var activeProfileId by remember { mutableStateOf(initialStore.activeProfileId) }
+    var curveEnabled by remember { mutableStateOf(initialEnabled) }
+
+    val activeProfile = profiles.firstOrNull { it.id == activeProfileId } ?: profiles.first()
+    var nitPoints by remember(activeProfileId) { mutableStateOf(activeProfile.nits) }
+
     var selectedIndex by remember { mutableIntStateOf(2) } // 25 lx indoor default highlight
     var showAllSliders by remember { mutableStateOf(false) }
 
-    val toastApplied = stringResource(R.string.toast_applied_live)
+    // Dialog states for creating/renaming/deleting profiles
+    var showNewProfileDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var dialogNameInput by remember { mutableStateOf("") }
 
-    fun persistAndPush(enabled: Boolean, points: List<Float>, showToast: Boolean = false) {
+    val toastApplied = stringResource(R.string.toast_applied_live)
+    val toastExported = stringResource(R.string.curve_exported_toast)
+    val toastImported = stringResource(R.string.curve_imported_toast)
+    val toastImportError = stringResource(R.string.curve_import_error)
+    val toastStockCopied = stringResource(R.string.curve_stock_copied_toast)
+
+    fun persistAndPush(
+        enabled: Boolean,
+        points: List<Float>,
+        updatedProfiles: List<CurveProfile> = profiles,
+        nextActiveId: String = activeProfileId,
+        showToast: Boolean = false
+    ) {
         val rawArray = points.toFloatArray()
         val monotonic = BrightnessMath.enforceMonotonic(rawArray)
-        nitPoints = monotonic.toList()
+        val monotonicList = monotonic.toList()
+        nitPoints = monotonicList
+
+        val syncedProfiles = updatedProfiles.map { prof ->
+            if (prof.id == nextActiveId) {
+                prof.copy(nits = monotonicList, updatedAt = System.currentTimeMillis())
+            } else {
+                prof
+            }
+        }
+        profiles = syncedProfiles
+        activeProfileId = nextActiveId
+        CurveProfileRepository.saveStore(prefs, syncedProfiles, nextActiveId)
+
         val encoded = BrightnessMath.serializeCurveConfig(enabled, monotonic)
         prefs.edit().putString("pref_curve_config", encoded).apply()
         scope.launch {
@@ -104,6 +161,133 @@ fun CurveEditorCard(
             Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
         }
     }
+
+    // SAF JSON Export / Import launchers (zero storage permission needed)
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val json = CurveProfileRepository.exportProfilesToJson(profiles, activeProfileId)
+                context.contentResolver.openOutputStream(uri)?.use { stream ->
+                    stream.write(json.toByteArray(Charsets.UTF_8))
+                }
+                Toast.makeText(context, toastExported, Toast.LENGTH_SHORT).show()
+            } catch (t: Throwable) {
+                Toast.makeText(context, "Ошибка экспорта: ${t.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val imported = CurveProfileRepository.importProfilesFromJson(raw)
+                if (imported.isEmpty()) {
+                    Toast.makeText(context, toastImportError, Toast.LENGTH_SHORT).show()
+                } else {
+                    val freshImported = imported.map { prof ->
+                        if (profiles.any { it.id == prof.id }) {
+                            CurveProfileRepository.createProfile(prof.name, prof.nits)
+                        } else {
+                            prof
+                        }
+                    }
+                    val merged = profiles + freshImported
+                    val target = freshImported.first()
+                    profiles = merged
+                    activeProfileId = target.id
+                    nitPoints = target.nits
+                    persistAndPush(curveEnabled, target.nits, merged, target.id, showToast = false)
+                    Toast.makeText(
+                        context,
+                        String.format(toastImported, freshImported.size),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (t: Throwable) {
+                Toast.makeText(context, "Ошибка импорта: ${t.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Dialogs
+    if (showNewProfileDialog) {
+        AlertDialog(
+            onDismissRequest = { showNewProfileDialog = false },
+            title = { Text(stringResource(R.string.curve_new_profile_title)) },
+            text = {
+                OutlinedTextField(
+                    value = dialogNameInput,
+                    onValueChange = { dialogNameInput = it },
+                    label = { Text(stringResource(R.string.curve_profile_name_hint)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val created = CurveProfileRepository.createProfile(dialogNameInput, nitPoints)
+                        val updatedList = profiles + created
+                        showNewProfileDialog = false
+                        persistAndPush(curveEnabled, created.nits, updatedList, created.id, showToast = true)
+                    }
+                ) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewProfileDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text(stringResource(R.string.curve_rename_profile_title)) },
+            text = {
+                OutlinedTextField(
+                    value = dialogNameInput,
+                    onValueChange = { dialogNameInput = it },
+                    label = { Text(stringResource(R.string.curve_profile_name_hint)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val nextName = dialogNameInput.trim().ifEmpty { activeProfile.name }.take(32)
+                        val renamed = profiles.map {
+                            if (it.id == activeProfileId) it.copy(name = nextName) else it
+                        }
+                        profiles = renamed
+                        CurveProfileRepository.saveStore(prefs, renamed, activeProfileId)
+                        showRenameDialog = false
+                    }
+                ) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    // Decide what curve to visualize: custom profile when enabled, real ROM curve when disabled
+    val hasRealStock = stockCurveNits != null && stockCurveNits.size == BrightnessMath.CURVE_POINT_COUNT
+    val displayedPoints = if (!curveEnabled && hasRealStock) stockCurveNits!! else nitPoints
+    val isShowingStockReal = !curveEnabled && hasRealStock
 
     Card(
         modifier = modifier
@@ -158,13 +342,203 @@ fun CurveEditorCard(
                 )
             }
 
+            // Saved Curve Profiles Bar (switch / create / rename / delete / export / import)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    profiles.forEach { profile ->
+                        val isSelected = profile.id == activeProfileId
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                Color(0xFF0F172A)
+                            },
+                            modifier = Modifier
+                                .defaultMinSize(minHeight = 36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    activeProfileId = profile.id
+                                    nitPoints = profile.nits
+                                    persistAndPush(curveEnabled, profile.nits, profiles, profile.id, showToast = curveEnabled)
+                                }
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                                .testTag("curve_profile_chip_${profile.id}")
+                        ) {
+                            Text(
+                                text = profile.name,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFCBD5E1),
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF0F172A),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                dialogNameInput = "Профиль ${profiles.size + 1}"
+                                showNewProfileDialog = true
+                            }
+                            .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                            .testTag("curve_add_profile_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = stringResource(R.string.curve_new_profile_title),
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = stringResource(R.string.curve_new_profile_short),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+                    }
+                }
+
+                // Profile utility actions row: Rename, Delete, Export JSON, Import JSON
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                dialogNameInput = activeProfile.name
+                                showRenameDialog = true
+                            },
+                            modifier = Modifier.size(48.dp).testTag("curve_rename_profile_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = stringResource(R.string.curve_rename_profile_title),
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (profiles.size > 1) {
+                            IconButton(
+                                onClick = {
+                                    val remaining = profiles.filterNot { it.id == activeProfileId }
+                                    val next = remaining.first()
+                                    profiles = remaining
+                                    activeProfileId = next.id
+                                    nitPoints = next.nits
+                                    persistAndPush(curveEnabled, next.nits, remaining, next.id, showToast = false)
+                                },
+                                modifier = Modifier.size(48.dp).testTag("curve_delete_profile_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = stringResource(R.string.curve_delete_profile),
+                                    modifier = Modifier.size(18.dp),
+                                    tint = Color(0xFFF87171)
+                                )
+                            }
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(
+                            onClick = { exportLauncher.launch("abg-curve-profiles.json") },
+                            modifier = Modifier.testTag("curve_export_button")
+                        ) {
+                            Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(stringResource(R.string.curve_export_short), fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                            modifier = Modifier.testTag("curve_import_button")
+                        ) {
+                            Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(stringResource(R.string.curve_import_short), fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
             // Interactive Canvas Visualization of the 7-point Log-Lux -> Nit curve
             CurveGraphCanvas(
-                nitPoints = nitPoints,
+                nitPoints = displayedPoints,
+                stockReferencePoints = if (curveEnabled) stockCurveNits else null,
                 selectedIndex = selectedIndex,
                 liveLux = liveLux,
-                isEnabled = curveEnabled
+                isEnabled = curveEnabled,
+                hasRealStock = hasRealStock,
+                onRefreshStockCurve = onRefreshStockCurve
             )
+
+            // When showing stock curve, offer a 1-tap button to clone real ROM curve into active profile
+            if (!curveEnabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (hasRealStock) {
+                        OutlinedButton(
+                            onClick = {
+                                val copied = BrightnessMath.enforceMonotonic(stockCurveNits!!.toFloatArray()).toList()
+                                nitPoints = copied
+                                persistAndPush(curveEnabled, copied, showToast = false)
+                                Toast.makeText(context, toastStockCopied, Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f).testTag("curve_copy_stock_button")
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(stringResource(R.string.curve_copy_stock), maxLines = 1)
+                        }
+                    } else {
+                        Text(
+                            text = stringResource(R.string.curve_stock_waiting_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = onRefreshStockCurve,
+                            modifier = Modifier.size(48.dp).testTag("curve_refresh_stock_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = stringResource(R.string.curve_refresh_stock),
+                                tint = Color(0xFF38BDF8)
+                            )
+                        }
+                    }
+                }
+            }
 
             // Quick Anchor Selector Row
             Row(
@@ -173,6 +547,7 @@ fun CurveEditorCard(
             ) {
                 CURVE_POINT_LABELS.forEachIndexed { idx, label ->
                     val isSelected = idx == selectedIndex
+                    val shownValue = displayedPoints.getOrElse(idx) { nitPoints[idx] }
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (isSelected) {
@@ -201,18 +576,24 @@ fun CurveEditorCard(
                                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFF94A3B8)
                             )
                             Text(
-                                text = "${nitPoints[idx].roundToInt()}",
+                                text = "${shownValue.roundToInt()}",
                                 fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFE2E8F0)
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else if (isShowingStockReal) {
+                                    Color(0xFFFBBF24)
+                                } else {
+                                    Color(0xFFE2E8F0)
+                                }
                             )
                         }
                     }
                 }
             }
 
-            // Active Anchor Fine Slider
+            // Active Anchor Fine Slider (edits active custom profile; moving enables custom curve)
             CurveAnchorSliderRow(
                 label = "${CURVE_POINT_LABELS[selectedIndex]} (${nitPoints[selectedIndex].roundToInt()} ${stringResource(R.string.unit_nits)})",
                 value = nitPoints[selectedIndex],
@@ -220,7 +601,6 @@ fun CurveEditorCard(
                 onValueChange = { newVal ->
                     val updated = nitPoints.toMutableList()
                     updated[selectedIndex] = newVal
-                    // Keep graph visually monotonic while dragging
                     for (i in selectedIndex + 1 until updated.size) {
                         if (updated[i] < updated[i - 1]) updated[i] = updated[i - 1]
                     }
@@ -345,15 +725,22 @@ private fun CurveAnchorSliderRow(
 @Composable
 private fun CurveGraphCanvas(
     nitPoints: List<Float>,
+    stockReferencePoints: List<Float>?,
     selectedIndex: Int,
     liveLux: Float?,
-    isEnabled: Boolean
+    isEnabled: Boolean,
+    hasRealStock: Boolean,
+    onRefreshStockCurve: () -> Unit
 ) {
-    val maxNitAxis = max(650f, (nitPoints.maxOrNull() ?: 600f) * 1.1f)
+    val allMax = listOfNotNull(
+        nitPoints.maxOrNull(),
+        stockReferencePoints?.maxOrNull()
+    ).maxOrNull() ?: 600f
+    val maxNitAxis = max(650f, allMax * 1.1f)
     val maxLogX = ln(1f + BrightnessMath.CURVE_ANCHOR_LUX.last())
 
     val currentTargetNit = remember(liveLux, nitPoints) {
-        if (liveLux != null) {
+        if (liveLux != null && nitPoints.size == BrightnessMath.CURVE_POINT_COUNT) {
             BrightnessMath.interpolatePiecewiseLogLux(
                 liveLux,
                 BrightnessMath.CURVE_ANCHOR_LUX,
@@ -367,13 +754,13 @@ private fun CurveGraphCanvas(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(168.dp)
+            .height(172.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF0A0F1D))
             .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(12.dp))
             .padding(12.dp)
     ) {
-        Canvas(modifier = Modifier.fillMaxWidth().height(144.dp)) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(148.dp)) {
             val w = size.width
             val h = size.height
             val padLeft = 6.dp.toPx()
@@ -405,7 +792,24 @@ private fun CurveGraphCanvas(
                 )
             }
 
-            // Build polyline and gradient area path
+            // Dashed stock ROM reference curve when Custom Curve is active
+            if (stockReferencePoints != null && stockReferencePoints.size == BrightnessMath.CURVE_POINT_COUNT) {
+                val refPath = Path()
+                BrightnessMath.CURVE_ANCHOR_LUX.forEachIndexed { idx, lux ->
+                    val pt = Offset(xForLux(lux), yForNit(stockReferencePoints[idx]))
+                    if (idx == 0) refPath.moveTo(pt.x, pt.y) else refPath.lineTo(pt.x, pt.y)
+                }
+                drawPath(
+                    path = refPath,
+                    color = Color(0xFFF59E0B).copy(alpha = 0.55f),
+                    style = Stroke(
+                        width = 1.6.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+                    )
+                )
+            }
+
+            // Primary curve polyline and gradient area path
             val linePath = Path()
             val areaPath = Path()
             val points = BrightnessMath.CURVE_ANCHOR_LUX.mapIndexed { idx, lux ->
@@ -425,7 +829,11 @@ private fun CurveGraphCanvas(
                 areaPath.close()
             }
 
-            val accentColor = if (isEnabled) Color(0xFF38BDF8) else Color(0xFF64748B)
+            val accentColor = when {
+                isEnabled -> Color(0xFF38BDF8)
+                hasRealStock -> Color(0xFFF59E0B)
+                else -> Color(0xFF64748B)
+            }
             drawPath(
                 path = areaPath,
                 brush = Brush.verticalGradient(
@@ -484,14 +892,31 @@ private fun CurveGraphCanvas(
         ) {
             Surface(
                 shape = RoundedCornerShape(6.dp),
-                color = if (isEnabled) Color(0xFF0C4A6E) else Color(0xFF1E293B)
+                color = when {
+                    isEnabled -> Color(0xFF0C4A6E)
+                    hasRealStock -> Color(0xFF78350F)
+                    else -> Color(0xFF1E293B)
+                },
+                modifier = if (!isEnabled) {
+                    Modifier.clip(RoundedCornerShape(6.dp)).clickable { onRefreshStockCurve() }
+                } else {
+                    Modifier
+                }
             ) {
                 Text(
-                    text = if (isEnabled) stringResource(R.string.curve_badge_active) else stringResource(R.string.curve_badge_stock),
+                    text = when {
+                        isEnabled -> stringResource(R.string.curve_badge_active)
+                        hasRealStock -> stringResource(R.string.curve_badge_stock_live)
+                        else -> stringResource(R.string.curve_badge_stock)
+                    },
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (isEnabled) Color(0xFF38BDF8) else Color(0xFF94A3B8)
+                    color = when {
+                        isEnabled -> Color(0xFF38BDF8)
+                        hasRealStock -> Color(0xFFFBBF24)
+                        else -> Color(0xFF94A3B8)
+                    }
                 )
             }
             if (liveLux != null && currentTargetNit != null) {

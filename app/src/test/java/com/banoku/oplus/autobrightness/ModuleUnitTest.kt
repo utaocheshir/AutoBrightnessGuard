@@ -1,12 +1,15 @@
 package com.banoku.oplus.autobrightness
 
+import com.banoku.oplus.autobrightness.util.CurveProfileRepository
 import com.banoku.oplus.autobrightness.util.DeviceCompatibility
+import com.banoku.oplus.autobrightness.util.HookState
 import com.banoku.oplus.autobrightness.util.LogType
 import com.banoku.oplus.autobrightness.util.RootHelper
 import com.banoku.oplus.autobrightness.util.UpdateChecker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -14,7 +17,7 @@ class ModuleUnitTest {
 
     @Test
     fun versionAndTagCheck() {
-        assertEquals("1.4.2", AutoBrightnessModule.VERSION)
+        assertEquals("1.4.3", AutoBrightnessModule.VERSION)
         assertEquals("AutoBrightnessGuard", AutoBrightnessModule.TAG)
         assertEquals("persist.autobrightness.block_reset", AutoBrightnessModule.PROP_BLOCK_RESET)
         assertEquals("persist.autobrightness.block_ambient", AutoBrightnessModule.PROP_BLOCK_AMBIENT)
@@ -78,6 +81,39 @@ class ModuleUnitTest {
     }
 
     @Test
+    fun stockNitArrayFormatAndParseCheck() {
+        val stock = floatArrayOf(8.5f, 14f, 28f, 70f, 155f, 320f, 600f)
+        val formatted = BrightnessMath.formatNitArray(stock)
+        val parsed = BrightnessMath.parseNitArray(formatted)
+        assertNotNull(parsed)
+        assertEquals(7, parsed!!.size)
+        assertEquals(8.5f, parsed[0], 0.01f)
+        assertEquals(600f, parsed[6], 0.01f)
+        assertNull(BrightnessMath.parseNitArray("1,2,3"))
+        assertNull(BrightnessMath.parseNitArray(""))
+    }
+
+    @Test
+    fun curveProfileExportAndImportCheck() {
+        val p1 = CurveProfileRepository.createProfile("День", listOf(10f, 25f, 60f, 140f, 350f, 700f, 1200f))
+        val p2 = CurveProfileRepository.createProfile("Ночь \"Комфорт\"", listOf(12f, 20f, 45f, 90f, 220f, 480f, 800f))
+        val json = CurveProfileRepository.exportProfilesToJson(listOf(p1, p2), p1.id)
+
+        val imported = CurveProfileRepository.importProfilesFromJson(json)
+        assertEquals(2, imported.size)
+        assertEquals("День", imported[0].name)
+        assertEquals("Ночь \"Комфорт\"", imported[1].name)
+        assertEquals(1200f, imported[0].nits[6], 0.1f)
+
+        // Single-line property fallback import + monotonicity enforcement
+        val lineImport = CurveProfileRepository.importProfilesFromJson("1:20,15,40,90,200,500,900")
+        assertEquals(1, lineImport.size)
+        assertTrue(lineImport[0].nits[1] >= lineImport[0].nits[0])
+
+        assertTrue(CurveProfileRepository.importProfilesFromJson("{invalid json}").isEmpty())
+    }
+
+    @Test
     fun hysteresisRangeWideningCheck() {
         // Standard indoor bounds around 50 lx: [38, 65] widened at 2.0x -> broader [newLeft, newRight]
         val widened = BrightnessMath.widenRangeBounds(50f, 38f, 65f, 2.0f)
@@ -94,15 +130,15 @@ class ModuleUnitTest {
     fun updateCheckerVersionComparison() {
         assertFalse(UpdateChecker.isVersionNewer("V1.3b", "1.3b"))
         assertFalse(UpdateChecker.isVersionNewer("v1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.4.2", "1.4.2"))
+        assertFalse(UpdateChecker.isVersionNewer("1.4.3", "1.4.3"))
+        assertTrue(UpdateChecker.isVersionNewer("1.4.3", "1.4.2"))
         assertTrue(UpdateChecker.isVersionNewer("1.4.2", "1.4.1"))
-        assertTrue(UpdateChecker.isVersionNewer("1.4.1", "1.4.0"))
         assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.4.2"))
+        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.4.3"))
     }
 
     @Test
-    fun simulationLogsReversedAndStatsCheck() {
+    fun simulationLogsAndRuntimeStatusCheck() {
         val sampleLogs = RootHelper.getSampleSimulationLogs()
         assertTrue(sampleLogs.isNotEmpty())
         assertTrue(sampleLogs.any { it.type == LogType.BLOCKED })
@@ -112,6 +148,22 @@ class ModuleUnitTest {
         val stats = RootHelper.computeStats(sampleLogs)
         assertEquals(2, stats.totalBlocked)
         assertEquals("20:11:49", stats.lastBlockedTime)
+
+        val runtimeStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "1.4.3")
+        assertTrue(runtimeStatus.moduleDetected)
+        assertEquals("1.4.3", runtimeStatus.loadedVersion)
+        assertFalse(runtimeStatus.isVersionMismatch)
+        assertEquals(9, runtimeStatus.installedCount)
+        assertTrue(runtimeStatus.hooks.all { it.state == HookState.INSTALLED })
+
+        val mismatchStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "1.4.4")
+        assertTrue(mismatchStatus.isVersionMismatch)
+
+        val stockCurve = RootHelper.extractLatestStockCurve(sampleLogs)
+        assertNotNull(stockCurve)
+        assertEquals(7, stockCurve!!.size)
+        assertEquals(8.5f, stockCurve[0], 0.01f)
+        assertEquals(600f, stockCurve[6], 0.01f)
     }
 
     @Test
@@ -120,5 +172,6 @@ class ModuleUnitTest {
         assertNotNull(summary.deviceModel)
         assertNotNull(summary.statusText)
         assertNotNull(summary.details)
+        assertNotNull(summary.romVersion)
     }
 }

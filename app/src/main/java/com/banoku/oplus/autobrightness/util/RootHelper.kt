@@ -153,12 +153,47 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:10",
-                message = "v1.4.2 (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
+                message = "v1.4.3 (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
                 message = "Hook [1/9] controller resetAutoBrightness installed (variants=2, lambda=true)"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [2/9] ambient resetAmbientAdapter(String) installed"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [3/9] stability anti-drift installed (targets=2)"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [4/9] StabilityProcess.getAccelerateScale installed (overloads=3)"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [5a/9] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [5b/9] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (8.5 nits) installed"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [6/9] OplusFeatureReduceBrightness.isReduceDisabled installed"
+            ),
+            LogEntry(
+                type = LogType.HOOK,
+                time = "20:00:11",
+                message = "Hook [7/9] LuxEvent\$LuxEventResult.calculateAuxLux balancer installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
@@ -169,6 +204,16 @@ object RootHelper {
                 type = LogType.HOOK,
                 time = "20:00:11",
                 message = "Hook [9/9] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed"
+            ),
+            LogEntry(
+                type = LogType.INFO,
+                time = "20:00:11",
+                message = "HOOK_SUMMARY:installed=9/9,version=1.4.3,sdk=${Build.VERSION.SDK_INT},hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK"
+            ),
+            LogEntry(
+                type = LogType.INFO,
+                time = "20:00:15",
+                message = "STOCK_CURVE:8.5,14,28,70,155,320,600"
             ),
             LogEntry(
                 type = LogType.BLOCKED,
@@ -203,6 +248,166 @@ object RootHelper {
             lastBlockedTime = latest?.time ?: "",
             lastBlockedMessage = latest?.message ?: ""
         )
+    }
+
+    fun extractLatestStockCurve(logs: List<LogEntry>): List<Float>? {
+        for (entry in logs) {
+            val idx = entry.message.indexOf("STOCK_CURVE:")
+            if (idx >= 0) {
+                val payload = entry.message.substring(idx + "STOCK_CURVE:".length)
+                    .trim()
+                    .split(" ", "\t", "\n")
+                    .firstOrNull()
+                    .orEmpty()
+                val parsed = com.banoku.oplus.autobrightness.BrightnessMath.parseNitArray(payload)
+                if (parsed != null) {
+                    return parsed.toList()
+                }
+            }
+        }
+        return null
+    }
+
+    fun parseModuleRuntimeStatus(logs: List<LogEntry>, expectedVersion: String): ModuleRuntimeStatus {
+        val hookTitles = listOf(
+            1 to "Reset Guard (resetAutoBrightness)",
+            2 to "Ambient Adapter (resetAmbientAdapter)",
+            3 to "Anti-Drift (StableForce / Recover)",
+            4 to "Debounce Lock (getAccelerateScale)",
+            5 to "Night Floor & DarkEnv (8.5 nit)",
+            6 to "App Smart Dimming (isReduceDisabled)",
+            7 to "360° Aux Smoother (calculateAuxLux)",
+            8 to "Hysteresis Widener (getLargeChangeLimit)",
+            9 to "Live Curve (getValueByCurve)"
+        )
+
+        if (logs.isEmpty()) {
+            return ModuleRuntimeStatus(
+                moduleDetected = false,
+                loadedVersion = "",
+                isVersionMismatch = false,
+                lastBootTime = "",
+                installedCount = 0,
+                totalCount = 9,
+                hooks = hookTitles.map { (id, title) ->
+                    HookStatusItem(id, title, HookState.UNKNOWN, "Нет данных из system_server")
+                }
+            )
+        }
+
+        // Convert to chronological order and focus on the most recent system_server session
+        val chrono = logs.asReversed()
+        val startIdx = chrono.indexOfLast {
+            it.message.contains("starting, sdk=", ignoreCase = true)
+        }
+        val session = if (startIdx >= 0) chrono.subList(startIdx, chrono.size) else chrono
+
+        val startEntry = if (startIdx >= 0) chrono[startIdx] else null
+        var loadedVersion = startEntry?.let { entry ->
+            Regex("\\bv([0-9]+\\.[0-9]+(?:\\.[0-9]+)?[a-zA-Z]*)").find(entry.message)?.groupValues?.get(1)
+        }.orEmpty()
+        val bootTime = startEntry?.time.orEmpty()
+
+        val stateMap = mutableMapOf<Int, HookState>()
+        val detailMap = mutableMapOf<Int, String>()
+        val hitMap = mutableMapOf<Int, Int>()
+
+        // Optional compact HOOK_SUMMARY parser
+        val summaryLine = session.lastOrNull { it.message.contains("HOOK_SUMMARY:") }?.message
+        if (summaryLine != null) {
+            if (loadedVersion.isEmpty()) {
+                loadedVersion = Regex("version=([^,\\s]+)").find(summaryLine)?.groupValues?.get(1).orEmpty()
+            }
+            val hooksPart = Regex("hooks=([^\\s]+)").find(summaryLine)?.groupValues?.get(1).orEmpty()
+            hooksPart.split(',').forEach { token ->
+                val parts = token.split(':')
+                if (parts.size == 2) {
+                    val idx = parts[0].toIntOrNull()
+                    if (idx != null) {
+                        stateMap[idx] = if (parts[1] == "OK") HookState.INSTALLED else HookState.SKIPPED
+                    }
+                }
+            }
+        }
+
+        var has5aOk = false
+        var has5bOk = false
+        var has5aSkip = false
+        var has5bSkip = false
+
+        for (entry in session) {
+            val msg = entry.message
+            // Hook installation lines
+            val hookMatch = Regex("Hook \\[(\\d+)([ab])?/\\d+\\]\\s*(.*)").find(msg)
+            if (hookMatch != null) {
+                val id = hookMatch.groupValues[1].toIntOrNull() ?: continue
+                val sub = hookMatch.groupValues[2]
+                val body = hookMatch.groupValues[3]
+                val isInstalled = body.contains("installed", ignoreCase = true)
+                val isSkipped = body.contains("skipped", ignoreCase = true)
+
+                if (id == 5 && sub.isNotEmpty()) {
+                    if (sub == "a") {
+                        if (isInstalled) has5aOk = true else if (isSkipped) has5aSkip = true
+                    } else if (sub == "b") {
+                        if (isInstalled) has5bOk = true else if (isSkipped) has5bSkip = true
+                    }
+                    stateMap[5] = when {
+                        has5aOk && has5bOk -> HookState.INSTALLED
+                        has5aSkip || has5bSkip -> HookState.SKIPPED
+                        has5aOk || has5bOk -> HookState.INSTALLED
+                        else -> HookState.UNKNOWN
+                    }
+                } else {
+                    if (isInstalled) stateMap[id] = HookState.INSTALLED
+                    else if (isSkipped) stateMap[id] = HookState.SKIPPED
+                }
+                detailMap[id] = body
+            }
+
+            // Runtime hit counters
+            when {
+                msg.contains("BLOCKED resetAutoBrightness") -> hitMap[1] = (hitMap[1] ?: 0) + 1
+                msg.contains("BLOCKED resetAmbientAdapter") -> hitMap[2] = (hitMap[2] ?: 0) + 1
+                msg.contains("anti-drift suppressed") -> hitMap[3] = (hitMap[3] ?: 0) + 1
+                msg.contains("debounce accelerateScale") -> hitMap[4] = (hitMap[4] ?: 0) + 1
+                msg.contains("DarkEnv") || msg.contains("floor clamped") -> hitMap[5] = (hitMap[5] ?: 0) + 1
+                msg.contains("per-app dimming") -> hitMap[6] = (hitMap[6] ?: 0) + 1
+                msg.contains("dual-sensor smoothed") -> hitMap[7] = (hitMap[7] ?: 0) + 1
+                msg.contains("GUARD hysteresis") -> hitMap[8] = (hitMap[8] ?: 0) + 1
+                msg.contains("CURVE override") -> hitMap[9] = (hitMap[9] ?: 0) + 1
+            }
+        }
+
+        val items = hookTitles.map { (id, title) ->
+            val state = stateMap[id] ?: HookState.UNKNOWN
+            val baseDetail = detailMap[id] ?: when (state) {
+                HookState.INSTALLED -> "Команда найдена в системе"
+                HookState.SKIPPED -> "Метод не найден в этой прошивке"
+                HookState.UNKNOWN -> "Ожидание старта / лога"
+            }
+            val hits = hitMap[id] ?: 0
+            val fullDetail = if (hits > 0) "$baseDetail • срабатываний: $hits" else baseDetail
+            HookStatusItem(id = id, name = title, state = state, details = fullDetail, runtimeHits = hits)
+        }
+
+        val detected = startEntry != null || stateMap.isNotEmpty()
+        val installedCount = items.count { it.state == HookState.INSTALLED }
+        val mismatch = loadedVersion.isNotEmpty() && !loadedVersion.equals(expectedVersion, ignoreCase = true)
+
+        return ModuleRuntimeStatus(
+            moduleDetected = detected,
+            loadedVersion = loadedVersion,
+            isVersionMismatch = mismatch,
+            lastBootTime = bootTime,
+            installedCount = installedCount,
+            totalCount = 9,
+            hooks = items
+        )
+    }
+
+    suspend fun softRebootFramework(): CommandResult {
+        return executeSuCommand("killall system_server")
     }
 
     private fun parseLogs(raw: String): List<LogEntry> {
@@ -277,3 +482,27 @@ enum class LogType {
     PASS,
     ERROR
 }
+
+enum class HookState {
+    INSTALLED,
+    SKIPPED,
+    UNKNOWN
+}
+
+data class HookStatusItem(
+    val id: Int,
+    val name: String,
+    val state: HookState,
+    val details: String,
+    val runtimeHits: Int = 0
+)
+
+data class ModuleRuntimeStatus(
+    val moduleDetected: Boolean,
+    val loadedVersion: String,
+    val isVersionMismatch: Boolean,
+    val lastBootTime: String,
+    val installedCount: Int,
+    val totalCount: Int,
+    val hooks: List<HookStatusItem>
+)

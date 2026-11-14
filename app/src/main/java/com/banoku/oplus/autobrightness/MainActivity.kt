@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,11 +43,13 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
@@ -56,6 +59,7 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -65,6 +69,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -75,6 +80,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -100,13 +106,17 @@ import com.banoku.oplus.autobrightness.ui.LightSensorsCard
 import com.banoku.oplus.autobrightness.ui.theme.AutoBrightnessGuardTheme
 import com.banoku.oplus.autobrightness.util.DeviceCompatibility
 import com.banoku.oplus.autobrightness.util.GuardStats
+import com.banoku.oplus.autobrightness.util.HookState
 import com.banoku.oplus.autobrightness.util.LocaleHelper
 import com.banoku.oplus.autobrightness.util.LogEntry
 import com.banoku.oplus.autobrightness.util.LogType
+import com.banoku.oplus.autobrightness.util.ModuleRuntimeStatus
 import com.banoku.oplus.autobrightness.util.ReleaseInfo
 import com.banoku.oplus.autobrightness.util.RootHelper
 import com.banoku.oplus.autobrightness.util.UpdateChecker
 import com.banoku.oplus.autobrightness.util.UpdateResult
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -125,19 +135,59 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainAppScreen() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+
     var selectedTab by remember { mutableIntStateOf(0) }
     var updateState by remember { mutableStateOf<UpdateResult?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var stats by remember { mutableStateOf(GuardStats(0, "", "")) }
+    var moduleStatus by remember {
+        mutableStateOf(RootHelper.parseModuleRuntimeStatus(emptyList(), BuildConfig.VERSION_NAME))
+    }
+    var stockCurveNits by remember {
+        val cached = prefs.getString("pref_stock_curve_cache", "").orEmpty()
+        mutableStateOf(BrightnessMath.parseNitArray(cached)?.toList())
+    }
+    var isRefreshingStatus by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // Silent background checks on launch
+    fun applyLogsToRuntimeState(logs: List<LogEntry>) {
+        if (logs.isNotEmpty()) {
+            stats = RootHelper.computeStats(logs)
+            moduleStatus = RootHelper.parseModuleRuntimeStatus(logs, BuildConfig.VERSION_NAME)
+            val parsedStock = RootHelper.extractLatestStockCurve(logs)
+            if (parsedStock != null) {
+                stockCurveNits = parsedStock
+                prefs.edit().putString(
+                    "pref_stock_curve_cache",
+                    BrightnessMath.formatNitArray(parsedStock.toFloatArray())
+                ).apply()
+            }
+        }
+    }
+
+    fun refreshRuntimeState() {
+        scope.launch {
+            isRefreshingStatus = true
+            val logs = RootHelper.readModuleLogs()
+            applyLogsToRuntimeState(logs)
+            isRefreshingStatus = false
+        }
+    }
+
+    // Silent background checks on launch + ensure custom curve persists if enabled
     LaunchedEffect(Unit) {
         scope.launch {
-            val logs = RootHelper.readModuleLogs()
-            if (logs.isNotEmpty()) {
-                stats = RootHelper.computeStats(logs)
+            val savedCurve = prefs.getString("pref_curve_config", "").orEmpty()
+            if (savedCurve.startsWith("1:") && RootHelper.isRootAvailable()) {
+                val currentProp = RootHelper.getSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, "")
+                if (currentProp != savedCurve) {
+                    RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, savedCurve)
+                }
             }
+            val logs = RootHelper.readModuleLogs()
+            applyLogsToRuntimeState(logs)
         }
         scope.launch {
             isCheckingUpdate = true
@@ -195,12 +245,17 @@ fun MainAppScreen() {
             0 -> OverviewTabContent(
                 modifier = Modifier.padding(innerPadding),
                 updateState = updateState,
-                stats = stats
+                stats = stats,
+                moduleStatus = moduleStatus,
+                isRefreshingStatus = isRefreshingStatus,
+                stockCurveNits = stockCurveNits,
+                onRefreshRuntime = { refreshRuntimeState() }
             )
             1 -> SettingsTabContent(modifier = Modifier.padding(innerPadding))
             2 -> LogsTabContent(
                 modifier = Modifier.padding(innerPadding),
-                onStatsUpdated = { newStats -> stats = newStats }
+                onStatsUpdated = { newStats -> stats = newStats },
+                onLogsFetched = { fetched -> applyLogsToRuntimeState(fetched) }
             )
             3 -> ToolsTabContent(
                 modifier = Modifier.padding(innerPadding),
@@ -227,11 +282,16 @@ fun MainAppScreen() {
 fun OverviewTabContent(
     modifier: Modifier = Modifier,
     updateState: UpdateResult?,
-    stats: GuardStats
+    stats: GuardStats,
+    moduleStatus: ModuleRuntimeStatus,
+    isRefreshingStatus: Boolean,
+    stockCurveNits: List<Float>?,
+    onRefreshRuntime: () -> Unit
 ) {
     val context = LocalContext.current
     var isIconHidden by remember { mutableStateOf(false) }
     var primaryLux by remember { mutableStateOf<Float?>(null) }
+    var hooksExpanded by remember { mutableStateOf(false) }
     val compInfo = remember { DeviceCompatibility.getCompatibilitySummary() }
     val isRoot = remember { RootHelper.isRootAvailable() }
 
@@ -264,6 +324,7 @@ fun OverviewTabContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -277,7 +338,9 @@ fun OverviewTabContent(
                                 text = stringResource(R.string.stats_card_title),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFFF0F9FF)
+                                color = Color(0xFFF0F9FF),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
@@ -290,7 +353,9 @@ fun OverviewTabContent(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF34D399)
+                                color = Color(0xFF34D399),
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -335,12 +400,41 @@ fun OverviewTabContent(
             LightSensorsCard(onPrimaryLuxChanged = { primaryLux = it })
         }
 
-        // Interactive Auto-Brightness Curve Editor Card
+        // Interactive Auto-Brightness Curve Editor Card (with profiles, export/import, and real stock curve)
         item {
-            CurveEditorCard(liveLux = primaryLux)
+            CurveEditorCard(
+                liveLux = primaryLux,
+                stockCurveNits = stockCurveNits,
+                onRefreshStockCurve = onRefreshRuntime
+            )
         }
 
+        // Real Hook Verification & Module Status Card
         item {
+            val statusHeaderColor = when {
+                !isRoot -> Color(0xFFFF9800)
+                !moduleStatus.moduleDetected -> Color(0xFFEF4444)
+                moduleStatus.isVersionMismatch -> Color(0xFFF59E0B)
+                moduleStatus.installedCount == moduleStatus.totalCount -> Color(0xFF10B981)
+                else -> Color(0xFFF59E0B)
+            }
+            val statusHeaderIcon = when {
+                !isRoot || moduleStatus.isVersionMismatch ||
+                    (moduleStatus.moduleDetected && moduleStatus.installedCount < moduleStatus.totalCount) -> Icons.Default.Warning
+                !moduleStatus.moduleDetected -> Icons.Default.Error
+                else -> Icons.Default.CheckCircle
+            }
+            val statusHeaderText = when {
+                !isRoot -> "Нужен Root для проверки хуков"
+                !moduleStatus.moduleDetected -> "Модуль не обнаружен в system_server"
+                moduleStatus.isVersionMismatch ->
+                    "В памяти v${moduleStatus.loadedVersion} — нужен Soft Reboot для v${BuildConfig.VERSION_NAME}"
+                moduleStatus.installedCount == moduleStatus.totalCount ->
+                    "Модуль активен (${moduleStatus.installedCount}/9 хуков • v${moduleStatus.loadedVersion.ifEmpty { BuildConfig.VERSION_NAME }})"
+                else ->
+                    "Частично активен (${moduleStatus.installedCount}/9 хуков • v${moduleStatus.loadedVersion.ifEmpty { BuildConfig.VERSION_NAME }})"
+            }
+
             Card(
                 modifier = Modifier.fillMaxWidth().testTag("status_card"),
                 shape = RoundedCornerShape(16.dp),
@@ -351,29 +445,52 @@ fun OverviewTabContent(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = Color(0xFF10B981),
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Text(
-                            text = stringResource(R.string.status_ready),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = statusHeaderIcon,
+                                contentDescription = null,
+                                tint = statusHeaderColor,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Text(
+                                text = statusHeaderText,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        IconButton(
+                            onClick = onRefreshRuntime,
+                            modifier = Modifier.size(48.dp).testTag("refresh_hook_status_button")
+                        ) {
+                            if (isRefreshingStatus) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Обновить статус хуков",
+                                    tint = Color(0xFF38BDF8)
+                                )
+                            }
+                        }
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text(
                                 text = "Область действия",
                                 style = MaterialTheme.typography.bodySmall,
@@ -395,34 +512,115 @@ fun OverviewTabContent(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isRoot) Color(0xFF10B981) else Color(0xFFFF9800)
+                                color = if (isRoot) Color(0xFF10B981) else Color(0xFFFF9800),
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
 
-                    Column {
-                        Text(
-                            text = stringResource(R.string.engine_summary_title),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    // 9-hook status pills + expandable real verification list
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { hooksExpanded = !hooksExpanded }
+                            .background(Color(0xFF0A0F1D).copy(alpha = 0.6f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Проверка команд в system_server (${moduleStatus.installedCount}/9)",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFE2E8F0)
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                moduleStatus.hooks.forEach { hookItem ->
+                                    val pillColor = when (hookItem.state) {
+                                        HookState.INSTALLED -> Color(0xFF10B981)
+                                        HookState.SKIPPED -> Color(0xFFEF4444)
+                                        HookState.UNKNOWN -> Color(0xFF64748B)
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = pillColor.copy(alpha = 0.22f)
+                                    ) {
+                                        Text(
+                                            text = "${hookItem.id}",
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            color = pillColor
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Icon(
+                            imageVector = if (hooksExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Показать список хуков",
+                            tint = Color(0xFF94A3B8)
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = stringResource(R.string.engine_summary_body),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF38BDF8)
-                        )
+                    }
+
+                    AnimatedVisibility(visible = hooksExpanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (moduleStatus.lastBootTime.isNotBlank()) {
+                                Text(
+                                    text = "Последний старт system_server: ${moduleStatus.lastBootTime}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                            }
+                            moduleStatus.hooks.forEach { item ->
+                                val itemColor = when (item.state) {
+                                    HookState.INSTALLED -> Color(0xFF34D399)
+                                    HookState.SKIPPED -> Color(0xFFF87171)
+                                    HookState.UNKNOWN -> Color(0xFF94A3B8)
+                                }
+                                val prefix = when (item.state) {
+                                    HookState.INSTALLED -> "✓"
+                                    HookState.SKIPPED -> "✕"
+                                    HookState.UNKNOWN -> "?"
+                                }
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF0A0F1D).copy(alpha = 0.45f))
+                                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                                ) {
+                                    Text(
+                                        text = "$prefix [${item.id}/9] ${item.name}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = itemColor
+                                    )
+                                    Text(
+                                        text = item.details,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
         item {
-            // Device Compatibility Card
+            // Device Compatibility Card (Real Model, ColorOS/OxygenOS ROM, Build ID, OS)
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("compatibility_card"),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
@@ -453,10 +651,24 @@ fun OverviewTabContent(
                         color = if (compInfo.isCompatible) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
+                    val deviceInfoLines = buildString {
+                        append("Устройство: ${compInfo.deviceModel}")
+                        if (compInfo.deviceCodename.isNotBlank()) {
+                            append(" (${compInfo.deviceCodename})")
+                        }
+                        if (compInfo.romVersion.isNotBlank()) {
+                            append("\nПрошивка: ${compInfo.romVersion}")
+                        }
+                        if (compInfo.buildDisplayId.isNotBlank()) {
+                            append("\nСборка: ${compInfo.buildDisplayId}")
+                        }
+                        append("\nОС: ${compInfo.androidVersion}")
+                    }
+
                     Text(
-                        text = "Устройство: ${compInfo.deviceModel}\nОС: ${compInfo.androidVersion}",
+                        text = deviceInfoLines,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
                     )
                 }
             }
@@ -581,7 +793,7 @@ private fun HeaderHero() {
                 color = Color(0xFFFFC107).copy(alpha = 0.2f)
             ) {
                 Text(
-                    text = "v1.4.2",
+                    text = "v1.4.3",
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
@@ -660,6 +872,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_block_reset_title),
                 desc = stringResource(R.string.pref_block_reset_desc),
+                osBadge = stringResource(R.string.os_tag_12_17),
                 checked = blockReset,
                 onCheckedChange = { newState ->
                     blockReset = newState
@@ -676,6 +889,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_block_ambient_title),
                 desc = stringResource(R.string.pref_block_ambient_desc),
+                osBadge = stringResource(R.string.os_tag_12_17),
                 checked = blockAmbient,
                 onCheckedChange = { newState ->
                     blockAmbient = newState
@@ -692,6 +906,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_strict_alarm_title),
                 desc = stringResource(R.string.pref_strict_alarm_desc),
+                osBadge = stringResource(R.string.os_tag_12_17),
                 checked = strictAlarm,
                 onCheckedChange = { newState ->
                     strictAlarm = newState
@@ -708,6 +923,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_stability_guard_title),
                 desc = stringResource(R.string.pref_stability_guard_desc),
+                osBadge = stringResource(R.string.os_tag_16_17),
                 checked = stabilityGuard,
                 testTag = "switch_stability_guard",
                 onCheckedChange = { newState ->
@@ -735,11 +951,18 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.pref_min_floor_title),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.pref_min_floor_title),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                OsCompatibilityBadge(stringResource(R.string.os_tag_17_verified))
+                            }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = stringResource(R.string.pref_min_floor_desc),
@@ -832,11 +1055,18 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = stringResource(R.string.pref_hysteresis_title),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.pref_hysteresis_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        OsCompatibilityBadge(stringResource(R.string.os_tag_16_17))
+                    }
                     Text(
                         text = stringResource(R.string.pref_hysteresis_desc),
                         style = MaterialTheme.typography.bodySmall,
@@ -875,6 +1105,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_debounce_lock_title),
                 desc = stringResource(R.string.pref_debounce_lock_desc),
+                osBadge = stringResource(R.string.os_tag_16_17),
                 checked = debounceLock,
                 testTag = "switch_debounce_lock",
                 onCheckedChange = { newState ->
@@ -892,6 +1123,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_smart_dimming_title),
                 desc = stringResource(R.string.pref_smart_dimming_desc),
+                osBadge = stringResource(R.string.os_tag_17_verified),
                 checked = disableSmartDimming,
                 testTag = "switch_smart_dimming",
                 onCheckedChange = { newState ->
@@ -909,6 +1141,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_dual_sensor_title),
                 desc = stringResource(R.string.pref_dual_sensor_desc),
+                osBadge = stringResource(R.string.os_tag_16_17),
                 checked = dualSensorGuard,
                 testTag = "switch_dual_sensor",
                 onCheckedChange = { newState ->
@@ -926,6 +1159,7 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             SettingSwitchCard(
                 title = stringResource(R.string.pref_verbose_log_title),
                 desc = stringResource(R.string.pref_verbose_log_desc),
+                osBadge = stringResource(R.string.os_tag_universal),
                 checked = verboseLog,
                 onCheckedChange = { newState ->
                     verboseLog = newState
@@ -1070,9 +1304,28 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
 }
 
 @Composable
+fun OsCompatibilityBadge(label: String) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = Color(0xFF38BDF8).copy(alpha = 0.14f)
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF7DD3FC),
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
+
+@Composable
 fun SettingSwitchCard(
     title: String,
     desc: String,
+    osBadge: String? = null,
     checked: Boolean,
     testTag: String? = null,
     onCheckedChange: (Boolean) -> Unit
@@ -1090,11 +1343,20 @@ fun SettingSwitchCard(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (!osBadge.isNullOrBlank()) {
+                        OsCompatibilityBadge(osBadge)
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = desc,
@@ -1121,7 +1383,8 @@ fun SettingSwitchCard(
 @Composable
 fun LogsTabContent(
     modifier: Modifier = Modifier,
-    onStatsUpdated: (GuardStats) -> Unit
+    onStatsUpdated: (GuardStats) -> Unit,
+    onLogsFetched: (List<LogEntry>) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1136,6 +1399,7 @@ fun LogsTabContent(
             logs = fetched
             val stats = RootHelper.computeStats(fetched)
             onStatsUpdated(stats)
+            onLogsFetched(fetched)
             statusMessage = "Загружено ${fetched.size} записей (LSPosed / logcat)"
         } else {
             statusMessage = "Событий сброса пока не зафиксировано (или root не предоставлен)"
@@ -1202,6 +1466,7 @@ fun LogsTabContent(
                             logs = fetched
                             val stats = RootHelper.computeStats(fetched)
                             onStatsUpdated(stats)
+                            onLogsFetched(fetched)
                             statusMessage = "Загружено ${fetched.size} записей (LSPosed / logcat)"
                         } else {
                             logs = emptyList()
@@ -1360,6 +1625,42 @@ fun ToolsTabContent(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var showSoftRebootDialog by remember { mutableStateOf(false) }
+    var isRebooting by remember { mutableStateOf(false) }
+
+    if (showSoftRebootDialog) {
+        AlertDialog(
+            onDismissRequest = { showSoftRebootDialog = false },
+            title = { Text(stringResource(R.string.soft_reboot_dialog_title)) },
+            text = { Text(stringResource(R.string.soft_reboot_dialog_desc)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSoftRebootDialog = false
+                        isRebooting = true
+                        scope.launch {
+                            val res = RootHelper.softRebootFramework()
+                            isRebooting = false
+                            if (!res.success) {
+                                Toast.makeText(
+                                    context,
+                                    "Не удалось выполнить Soft Reboot: ${res.error.ifBlank { "нет root" }}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.soft_reboot_btn), color = Color(0xFFF87171))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSoftRebootDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
 
     LazyColumn(
         modifier = modifier
@@ -1430,7 +1731,7 @@ fun ToolsTabContent(
                         }
                         null -> {
                             Text(
-                                text = "Текущая версия: v1.4.2",
+                                text = "Текущая версия: v1.4.3",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1450,6 +1751,57 @@ fun ToolsTabContent(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(stringResource(R.string.check_updates))
                         }
+                    }
+                }
+            }
+        }
+
+        item {
+            // Interactive Soft Reboot Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Быстрый Soft Reboot",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Перезапуск system_server за ~5 сек для применения нового кода хуков без полной перезагрузки",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    ElevatedButton(
+                        onClick = { showSoftRebootDialog = true },
+                        enabled = !isRebooting,
+                        colors = ButtonDefaults.elevatedButtonColors(
+                            containerColor = Color(0xFF7F1D1D).copy(alpha = 0.45f),
+                            contentColor = Color(0xFFFCA5A5)
+                        ),
+                        modifier = Modifier.testTag("soft_reboot_button")
+                    ) {
+                        if (isRebooting) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(stringResource(R.string.soft_reboot_btn))
                     }
                 }
             }
@@ -1535,7 +1887,7 @@ fun ToolsTabContent(
 
         item {
             CommandCard(
-                title = "5. Мягкий перезапуск фреймворка (Soft Reboot)",
+                title = "5. Команда Soft Reboot для терминала",
                 desc = "Перезапускает system_server за 5 секунд без полной перезагрузки ядра телефона.",
                 command = "su -c \"killall system_server\""
             )
@@ -1575,8 +1927,10 @@ fun ToolsTabContent(
                             val comp = DeviceCompatibility.getCompatibilitySummary()
                             val report = buildString {
                                 appendLine("=== Auto Brightness Guard Diagnostic Report ===")
-                                appendLine("Module Version: 1.4.2 (LibXposed API 102)")
-                                appendLine("Device: ${comp.deviceModel}")
+                                appendLine("Module Version: 1.4.3 (LibXposed API 102)")
+                                appendLine("Device: ${comp.deviceModel} (${comp.deviceCodename})")
+                                appendLine("ROM: ${comp.romVersion}")
+                                appendLine("Build: ${comp.buildDisplayId}")
                                 appendLine("OS: ${comp.androidVersion}")
                                 appendLine("Fingerprint: ${comp.fingerprint}")
                                 appendLine("Root Status: ${if (RootHelper.isRootAvailable()) "Available" else "Not detected"}")
@@ -1759,6 +2113,7 @@ fun CommandCard(
 
 @Composable
 fun FaqTabContent(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     var expandedFaq by remember { mutableStateOf<Int?>(0) }
 
     LazyColumn(
@@ -1779,8 +2134,8 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         item {
             FaqItem(
                 id = 0,
-                question = "Что нового в версии 1.4.0 (Verified ColorOS 17 Engine)?",
-                answer = "1. Защита сброса (ColorOS 17 DragOpt): перехват обеих перегрузок resetAutoBrightness() и resetAutoBrightness(int), т.к. ColorOS 17 вызывает перегрузку с аргументом напрямую по таймеру.\n2. Анти-дрейф в покое: блокировка handleStableForceChange и handleSmallChangeAnimating в OplusBrightnessAmbientAdapter, убирающая плавание яркости при неизменном освещении.\n3. Стабилизатор окон задержки: ограничение StabilityProcess.getAccelerateScale() до 1.0x против микродрожи рук.\n4. Ночной минимум 8.5 нит + DarkEnv Guard: отмена 20-минутного прогрессивного затемнения (OplusFeatureDarkEnvReduceBrightness) и калиброванный минимум в нитах в OplusBrightnessPostProcessingManager.convertNitToBrightness().\n5. Отмена Smart Dimming: принудительный isReduceDisabled() в OplusFeatureReduceBrightness (AppFossReduceConfig).\n6. Балансировщик 360° Aux-датчика: сглаживание скачков в помещении в LuxEventResult.calculateAuxLux().",
+                question = "Что нового в версии 1.4.3?",
+                answer = "1. Живой статус 9/9 хуков: карточка состояния теперь читает реальный ответ system_server и показывает по каждому из 9 хуков — найден ли метод в прошивке, сколько раз сработал и совпадает ли версия в памяти.\n2. Профили кривой (Экспорт / Импорт JSON): сохраняйте несколько кривых яркости, переключайтесь в 1 тап, экспортируйте и импортируйте профили без лишних разрешений.\n3. Реальная штатная кривая на графике: когда своя кривая выключена, модуль считывает родную/обученную кривую из system_server и рисует её на графике (можно взять за основу для своего профиля). Своя кривая сохраняется в persist.* и применяется сразу после перезагрузки.\n4. Точный % яркости и раздельные датчики: расчёт процента яркости откалиброван под sys.oplus.multibrightness (4095 / 8191 / 16383), а тыловой датчик tcs3449 (AUX) отделён от подэкранного tcs3720 High_pwm (PWM).\n5. Прочие улучшения: реальная модель и версия ColorOS/OxygenOS в карточке совместимости, пометки версий ОС (12–17 / 16–17 / 17) в Настройках, кнопка Soft Reboot с подтверждением в Инструментах, фикс бейджа SYSTEM_SERVER и кликабельная ссылка на GitHub.",
                 isExpanded = expandedFaq == 0,
                 onToggle = { expandedFaq = if (expandedFaq == 0) null else 0 }
             )
@@ -1800,7 +2155,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             FaqItem(
                 id = 2,
                 question = "Требуется ли перезагрузка смартфона при обновлении APK?",
-                answer = "Если обновляется только интерфейс приложения (дизайн, статистика, язык) — перезагрузка НЕ нужна, приложение работает сразу.\nЕсли обновляется сам код хука в ядре Android (AutoBrightnessModule) — для того, чтобы system_server подтянул новый DEX, нужен Soft Reboot (команда killall system_server за 5 секунд) или обычная перезагрузка.\nИзменение же ползунков настроек в приложении перезагрузки НЕ ТРЕБУЕТ вообще никогда (работает через SystemProperties).",
+                answer = "Если обновляется только интерфейс приложения — перезагрузка НЕ нужна.\nЕсли обновляется код хуков в ядре Android (AutoBrightnessModule, например при переходе с 1.4.2 на 1.4.3) — для того, чтобы system_server подтянул новый DEX, выполните Soft Reboot (кнопка есть на вкладке «Инструменты») или обычную перезагрузку.\nИзменение же ползунков настроек и профилей кривой перезагрузки НЕ ТРЕБУЕТ никогда (работает мгновенно через SystemProperties).",
                 isExpanded = expandedFaq == 2,
                 onToggle = { expandedFaq = if (expandedFaq == 2) null else 2 }
             )
@@ -1810,7 +2165,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
             FaqItem(
                 id = 3,
                 question = "Влияет ли модуль на расход батареи?",
-                answer = "Нет. В версии 1.4.2 реализована полная энергоэффективность:\n• Приложение-компаньон регистрирует датчики освещённости и наблюдатель яркости строго при активном окне (ON_RESUME / ON_PAUSE) в режиме SENSOR_DELAY_NORMAL — в фоне или при выключенном экране потребление 0%.\n• Хуки в system_server не создают фоновых потоков, таймеров и вейклоков, кешируют Method-дескрипторы SystemProperties и распарсенную кривую без лишних аллокаций.",
+                answer = "Нет. С версии 1.4.2–1.4.3 реализована строгая энергоэффективность:\n• Слушатели датчиков освещённости (SENSOR_DELAY_NORMAL) и наблюдатель яркости активны строго пока приложение открыто на экране (ON_RESUME / ON_PAUSE) — в фоне и при выключенном экране потребление 0%.\n• Отключённые на карточке датчики (MAIN / AUX) полностью отписываются от прослушивания в UI.\n• Хуки в system_server не создают фоновых потоков, таймеров и вейклоков, кешируют Method-дескрипторы и кривую без лишних аллокаций.",
                 isExpanded = expandedFaq == 3,
                 onToggle = { expandedFaq = if (expandedFaq == 3) null else 3 }
             )
@@ -1834,10 +2189,26 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Версия 1.4.2 (Текущая — Eco, Live Brightness & Wide Range)",
+                            text = "Версия 1.4.3 (Текущая — Профили кривой, Живые хуки и ColorOS 17)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF10B981)
+                        )
+                        Text(
+                            text = "• Живая проверка 9/9 хуков в карточке состояния (установка, версия в system_server и число срабатываний).\n• Несколько сохраняемых профилей ручной кривой + экспорт/импорт в JSON.\n• Отображение реальной штатной/обученной кривой из system_server при выключенной своей кривой + сравнение пунктиром.\n• Точный % яркости по sys.oplus.multibrightness (4095/8191/16383) и разделение tcs3449 (AUX) от tcs3720 High_pwm (PWM).\n• Реальная модель, версия ColorOS/OxygenOS и сборка в карточке совместимости + пометки ОС в Настройках + кнопка Soft Reboot.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Версия 1.4.2 (Eco, Live Brightness & Wide Range)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
                         )
                         Text(
                             text = "• Исправлен фильтр датчиков (исключён flight_detect / ToF / proximity) и добавлена живая строка текущей яркости экрана (% + raw).\n• Кнопки раздельного отключения/включения датчиков света (Основной / Aux) прямо на главном экране.\n• Диапазон ползунков ручной кривой увеличен в 2.5–3 раза (до 3200 нит), ручной ночной минимум расширен до 0–150 нит.\n• Балансировщик 360° Aux-датчика больше не глушит тыловой свет: плавное пропорциональное смешивание 60% + временное EMA-сглаживание.\n• Энергоэффективность (Eco): датчики и наблюдатель яркости работают строго пока приложение открыто на экране (ON_RESUME/ON_PAUSE), а в хуке system_server закеширована рефлексия и конфиг кривой.",
@@ -1945,10 +2316,37 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Автор модуля: Banoku & utaocheshir\nВерсия: 1.4.2\nAPI: LibXposed 102.0.0 (LSPosed)\nGitHub: https://github.com/utaocheshir/AutoBrightnessGuard",
+                        text = "Автор модуля: Banoku\nВерсия: 1.4.3\nAPI: LibXposed 102.0.0 (LSPosed)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                UpdateChecker.openInBrowser(context, UpdateChecker.GITHUB_REPO_URL)
+                            }
+                            .padding(vertical = 8.dp, horizontal = 4.dp)
+                            .testTag("github_repo_link"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = "Открыть GitHub",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = UpdateChecker.GITHUB_REPO_URL,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF38BDF8),
+                            textDecoration = TextDecoration.Underline
+                        )
+                    }
                 }
             }
         }

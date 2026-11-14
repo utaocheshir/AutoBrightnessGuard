@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -60,23 +61,33 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
 import com.banoku.oplus.autobrightness.R
+import com.banoku.oplus.autobrightness.util.DeviceCompatibility
 import com.banoku.oplus.autobrightness.util.RootHelper
 import kotlinx.coroutines.launch
 import kotlin.math.ln
 import kotlin.math.roundToInt
 
+enum class SensorRole(val label: String) {
+    MAIN("MAIN"),
+    AUX("AUX"),
+    PWM("PWM")
+}
+
 data class LightSensorItem(
     val key: String,
     val sensor: Sensor,
-    val roleLabel: String
+    val role: SensorRole
 )
 
 private fun isGenuineAmbientLightSensor(sensor: Sensor): Boolean {
     val name = sensor.name.lowercase()
     val st = sensor.stringType.lowercase()
 
-    // Exclude Time-of-Flight (flight_detect), laser, proximity, flicker, camera sensors
-    val excludedTokens = listOf("flight", "tof", "laser", "flicker", "proximity", "prox", "flashlight", "camera")
+    // Exclude Time-of-Flight (flight_detect), laser, proximity, flicker, camera, cct/wise_rgb sensors
+    val excludedTokens = listOf(
+        "flight", "tof", "laser", "flicker", "proximity", "prox",
+        "flashlight", "camera", "high_pwm_cct", "wise_rgb", "spectral"
+    )
     if (excludedTokens.any { name.contains(it) || st.contains(it) }) {
         return false
     }
@@ -85,7 +96,19 @@ private fun isGenuineAmbientLightSensor(sensor: Sensor): Boolean {
 
     val wordRegex = Regex("\\b(light|als|lux|ambient)\\b")
     return wordRegex.containsMatchIn(name) || wordRegex.containsMatchIn(st) ||
-        st.contains("rear_light") || st.contains("front_light")
+        st.contains("light_rear") || st.contains("rear_light") || st.contains("high_pwm_rgb")
+}
+
+private fun classifySensorRole(sensor: Sensor, index: Int): SensorRole {
+    val name = sensor.name.lowercase()
+    val st = sensor.stringType.lowercase()
+    return when {
+        st.contains("high_pwm") || name.contains("high_pwm") -> SensorRole.PWM
+        st.contains("light_rear") || st.contains("rear") || st.contains("back") ||
+            name.contains("rear") || name.contains("back") || name.contains("aux") -> SensorRole.AUX
+        sensor.type == Sensor.TYPE_LIGHT || index == 0 -> SensorRole.MAIN
+        else -> SensorRole.AUX
+    }
 }
 
 private fun readCurrentBrightness(context: Context): Pair<Float, Int> {
@@ -127,20 +150,10 @@ fun LightSensorsCard(
                 .filter { isGenuineAmbientLightSensor(it) }
                 .distinctBy { "${it.name}:${it.type}:${it.vendor}" }
                 .mapIndexed { index, sensor ->
-                    val isRear = sensor.name.contains("rear", ignoreCase = true) ||
-                        sensor.name.contains("back", ignoreCase = true) ||
-                        sensor.name.contains("aux", ignoreCase = true) ||
-                        sensor.stringType.contains("rear", ignoreCase = true) ||
-                        sensor.stringType.contains("back", ignoreCase = true)
-                    val role = when {
-                        index == 0 && !isRear -> "MAIN"
-                        isRear || index > 0 -> "AUX"
-                        else -> "ALS"
-                    }
                     LightSensorItem(
                         key = "${sensor.name}:${sensor.type}:$index",
                         sensor = sensor,
-                        roleLabel = role
+                        role = classifySensorRole(sensor, index)
                     )
                 }
         }
@@ -152,8 +165,11 @@ fun LightSensorsCard(
     val initialBrightness = remember { readCurrentBrightness(context) }
     var brightnessFloat by remember { mutableFloatStateOf(initialBrightness.first) }
     var brightnessInt by remember { mutableIntStateOf(initialBrightness.second) }
+    val maxBrightnessScale = remember(brightnessInt) {
+        DeviceCompatibility.getMultibrightnessMax(brightnessInt)
+    }
 
-    // Individual sensor enable/disable switches backed by SystemProperties
+    // Individual sensor enable/disable switches backed by SystemProperties (MAIN and AUX/tcs3449 strictly separated)
     var mainSensorDisabled by remember {
         mutableStateOf(prefs.getBoolean("pref_disable_main_sensor", false))
     }
@@ -163,26 +179,36 @@ fun LightSensorsCard(
     val toastApplied = stringResource(R.string.toast_applied_live)
 
     // Register sensors & brightness observer ONLY on ON_RESUME and unregister immediately on ON_PAUSE
-    // so minimized/backgrounded UI consumes 0.00% battery.
-    DisposableEffect(lifecycleOwner, sensorManager, detectedSensors) {
+    // Also skip registering UI listeners for individually disabled MAIN/AUX sensors for maximum battery savings.
+    DisposableEffect(lifecycleOwner, sensorManager, detectedSensors, mainSensorDisabled, auxSensorDisabled) {
         val mainHandler = Handler(Looper.getMainLooper())
         val listeners = mutableListOf<Pair<Sensor, SensorEventListener>>()
         var brightnessObserver: ContentObserver? = null
         var isRegistered = false
 
+        fun isRoleDisabled(role: SensorRole): Boolean = when (role) {
+            SensorRole.MAIN -> mainSensorDisabled
+            SensorRole.AUX -> auxSensorDisabled
+            SensorRole.PWM -> false
+        }
+
         fun registerAll() {
             if (isRegistered) return
             isRegistered = true
 
-            // 1. Ambient Light Sensors (low-power SENSOR_DELAY_NORMAL)
+            // 1. Active Ambient Light Sensors (low-power SENSOR_DELAY_NORMAL)
             if (sensorManager != null) {
-                detectedSensors.forEachIndexed { index, item ->
+                detectedSensors.forEach { item ->
+                    if (isRoleDisabled(item.role)) {
+                        readings.remove(item.key)
+                        return@forEach
+                    }
                     val listener = object : SensorEventListener {
                         override fun onSensorChanged(event: SensorEvent?) {
                             val lux = event?.values?.firstOrNull() ?: return
                             if (!lux.isNaN() && !lux.isInfinite() && lux >= 0f) {
                                 readings[item.key] = lux
-                                if (index == 0) {
+                                if (item.role == SensorRole.MAIN) {
                                     onPrimaryLuxChanged(lux)
                                 }
                             }
@@ -282,6 +308,7 @@ fun LightSensorsCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -307,17 +334,20 @@ fun LightSensorsCard(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF34D399)
+                        color = Color(0xFF34D399),
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-            // Current Screen Brightness Readout Row
+            // Current Screen Brightness Readout Row (calibrated dynamically by sys.oplus.multibrightness)
             ScreenBrightnessRow(
                 brightnessFloat = brightnessFloat,
-                brightnessInt = brightnessInt
+                brightnessInt = brightnessInt,
+                maxScale = maxBrightnessScale
             )
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
@@ -331,17 +361,22 @@ fun LightSensorsCard(
             } else {
                 detectedSensors.forEach { item ->
                     val luxValue = readings[item.key]
-                    val isMain = item.roleLabel == "MAIN"
-                    val isDisabled = if (isMain) mainSensorDisabled else auxSensorDisabled
+                    val canToggle = item.role == SensorRole.MAIN || item.role == SensorRole.AUX
+                    val isDisabled = when (item.role) {
+                        SensorRole.MAIN -> mainSensorDisabled
+                        SensorRole.AUX -> auxSensorDisabled
+                        SensorRole.PWM -> false
+                    }
                     SensorReadingRow(
                         item = item,
                         lux = luxValue,
                         isSensorEnabled = !isDisabled,
+                        canToggle = canToggle,
                         onToggleSensor = {
-                            if (isMain) {
+                            if (item.role == SensorRole.MAIN) {
                                 val nextDisabled = !mainSensorDisabled
                                 mainSensorDisabled = nextDisabled
-                                // Never leave both sensors disabled simultaneously
+                                // Never leave both MAIN and AUX sensors disabled simultaneously
                                 if (nextDisabled && auxSensorDisabled) {
                                     auxSensorDisabled = false
                                     prefs.edit().putBoolean("pref_disable_aux_sensor", false).apply()
@@ -349,11 +384,13 @@ fun LightSensorsCard(
                                         RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR, false)
                                     }
                                 }
+                                if (nextDisabled) onPrimaryLuxChanged(null)
                                 prefs.edit().putBoolean("pref_disable_main_sensor", nextDisabled).apply()
                                 scope.launch {
                                     RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR, nextDisabled)
                                 }
-                            } else {
+                                Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
+                            } else if (item.role == SensorRole.AUX) {
                                 val nextDisabled = !auxSensorDisabled
                                 auxSensorDisabled = nextDisabled
                                 if (nextDisabled && mainSensorDisabled) {
@@ -367,8 +404,8 @@ fun LightSensorsCard(
                                 scope.launch {
                                     RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR, nextDisabled)
                                 }
+                                Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                             }
-                            Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                         }
                     )
                 }
@@ -380,18 +417,19 @@ fun LightSensorsCard(
 @Composable
 private fun ScreenBrightnessRow(
     brightnessFloat: Float,
-    brightnessInt: Int
+    brightnessInt: Int,
+    maxScale: Int
 ) {
+    val safeMax = maxScale.coerceAtLeast(255).toFloat()
     val pct = when {
         brightnessFloat in 0f..1f -> (brightnessFloat * 100f).roundToInt().coerceIn(0, 100)
-        brightnessInt in 0..255 -> ((brightnessInt / 255f) * 100f).roundToInt().coerceIn(0, 100)
-        brightnessInt > 255 -> ((brightnessInt / 8191f) * 100f).roundToInt().coerceIn(0, 100)
+        brightnessInt >= 0 -> ((brightnessInt / safeMax) * 100f).roundToInt().coerceIn(0, 100)
         else -> -1
     }
     val progress = if (pct >= 0) pct / 100f else 0f
 
     val valueLabel = when {
-        pct >= 0 && brightnessInt >= 0 -> "$pct% (raw $brightnessInt)"
+        pct >= 0 && brightnessInt >= 0 -> "$pct% ($brightnessInt/$maxScale)"
         pct >= 0 -> "$pct%"
         else -> stringResource(R.string.sensors_waiting)
     }
@@ -445,6 +483,7 @@ private fun SensorReadingRow(
     item: LightSensorItem,
     lux: Float?,
     isSensorEnabled: Boolean,
+    canToggle: Boolean,
     onToggleSensor: () -> Unit
 ) {
     val normalizedProgress = if (lux != null && lux > 0f && isSensorEnabled) {
@@ -455,8 +494,9 @@ private fun SensorReadingRow(
 
     val roleColor = when {
         !isSensorEnabled -> MaterialTheme.colorScheme.outline
-        item.roleLabel == "MAIN" -> Color(0xFF10B981)
-        else -> Color(0xFFF59E0B)
+        item.role == SensorRole.MAIN -> Color(0xFF10B981)
+        item.role == SensorRole.AUX -> Color(0xFFF59E0B)
+        else -> Color(0xFF38BDF8)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -481,11 +521,13 @@ private fun SensorReadingRow(
                     color = roleColor.copy(alpha = 0.15f)
                 ) {
                     Text(
-                        text = item.roleLabel,
+                        text = item.role.label,
                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = roleColor
+                        color = roleColor,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
                 Text(
@@ -521,29 +563,45 @@ private fun SensorReadingRow(
                     }
                 )
 
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (isSensorEnabled) {
-                        Color(0xFF10B981).copy(alpha = 0.2f)
-                    } else {
-                        Color(0xFFEF4444).copy(alpha = 0.2f)
-                    },
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onToggleSensor() }
-                        .testTag("toggle_sensor_${item.roleLabel.lowercase()}")
-                ) {
-                    Text(
-                        text = if (isSensorEnabled) {
-                            stringResource(R.string.sensor_btn_on)
+                if (canToggle) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSensorEnabled) {
+                            Color(0xFF10B981).copy(alpha = 0.2f)
                         } else {
-                            stringResource(R.string.sensor_btn_off)
+                            Color(0xFFEF4444).copy(alpha = 0.2f)
                         },
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isSensorEnabled) Color(0xFF34D399) else Color(0xFFF87171)
-                    )
+                        modifier = Modifier
+                            .defaultMinSize(minWidth = 48.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onToggleSensor() }
+                            .testTag("toggle_sensor_${item.role.label.lowercase()}")
+                    ) {
+                        Text(
+                            text = if (isSensorEnabled) {
+                                stringResource(R.string.sensor_btn_on)
+                            } else {
+                                stringResource(R.string.sensor_btn_off)
+                            },
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSensorEnabled) Color(0xFF34D399) else Color(0xFFF87171)
+                        )
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF38BDF8).copy(alpha = 0.14f)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.sensor_monitor_badge),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF38BDF8)
+                        )
+                    }
                 }
             }
         }

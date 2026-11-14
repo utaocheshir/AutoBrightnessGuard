@@ -87,4 +87,31 @@
     <string name="pref_hysteresis_title">Порог нечувствительности света (гистерезис)</string>
     <string name="pref_hysteresis_desc">Расширяет мёртвую зону в StabilityProcess.getLargeChangeLimit(), чтобы мелкие колебания света не дёргали яркость.</string>
     <string name="pref_hysteresis_value">Мёртвая зона: %.1fx</string>
+
+    <string name="sensor_monitor_badge">МОНИТОР</string>
+    <string name="curve_default_profile_name">Мой профиль</string>
+    <string name="curve_new_profile_title">Новый профиль кривой</string>
+    <string name="curve_rename_profile_title">Переименовать профиль</string>
+    <string name="curve_profile_name_hint">Название профиля</string>
+    <string name="curve_new_profile_short">Новый</string>
+    <string name="curve_delete_profile">Удалить профиль</string>
+    <string name="curve_export_short">Экспорт</string>
+    <string name="curve_import_short">Импорт</string>
+    <string name="curve_exported_toast">Профили экспортированы в JSON</string>
+    <string name="curve_imported_toast">Импортировано профилей: %d</string>
+    <string name="curve_import_error">Неверный формат файла кривой</string>
+    <string name="curve_badge_stock_live">ШТАТНАЯ (РЕАЛЬНАЯ)</string>
+    <string name="curve_copy_stock">Взять штатную в профиль</string>
+    <string name="curve_stock_copied_toast">Штатная кривая скопирована в профиль</string>
+    <string name="curve_stock_waiting_hint">Ожидается считывание штатной кривой из system_server (измените свет или ↻)</string>
+    <string name="curve_refresh_stock">Обновить кривую</string>
+    <string name="save">Сохранить</string>
+    <string name="cancel">Отмена</string>
+    <string name="soft_reboot_btn">Soft Reboot</string>
+    <string name="soft_reboot_dialog_title">Перезапустить system_server?</string>
+    <string name="soft_reboot_dialog_desc">Экран погаснет на ~5 секунд, открытые приложения закроются. Ядро и пользовательские данные не затронутся.</string>
+    <string name="os_tag_12_17">OOS/COS 12–17</string>
+    <string name="os_tag_16_17">COS/OOS 16–17</string>
+    <string name="os_tag_17_verified">ColorOS 17 (и 16*)</string>
+    <string name="os_tag_universal">Все 12–17</string>
 </resources>
