@@ -79,7 +79,7 @@ import com.banoku.oplus.autobrightness.BrightnessMath
 import com.banoku.oplus.autobrightness.R
 import com.banoku.oplus.autobrightness.util.CurveProfile
 import com.banoku.oplus.autobrightness.util.CurveProfileRepository
-import com.banoku.oplus.autobrightness.util.RootHelper
+import com.banoku.oplus.autobrightness.util.XposedBridgeClient
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.ln
@@ -131,6 +131,9 @@ fun CurveEditorCard(
     val toastImported = stringResource(R.string.curve_imported_toast)
     val toastImportError = stringResource(R.string.curve_import_error)
     val toastStockCopied = stringResource(R.string.curve_stock_copied_toast)
+    val defaultNewProfileFmt = stringResource(R.string.curve_default_new_name)
+    val exportErrorFmt = stringResource(R.string.curve_export_error)
+    val importExceptionFmt = stringResource(R.string.curve_import_exception)
 
     fun persistAndPush(
         enabled: Boolean,
@@ -158,7 +161,12 @@ fun CurveEditorCard(
         val encoded = BrightnessMath.serializeCurveConfig(enabled, monotonic)
         prefs.edit().putString("pref_curve_config", encoded).apply()
         scope.launch {
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, encoded)
+            XposedBridgeClient.syncString(
+                prefs,
+                "pref_curve_config",
+                AutoBrightnessModule.PROP_CURVE_CONFIG,
+                encoded
+            )
         }
         if (showToast) {
             Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
@@ -177,7 +185,11 @@ fun CurveEditorCard(
                 }
                 Toast.makeText(context, toastExported, Toast.LENGTH_SHORT).show()
             } catch (t: Throwable) {
-                Toast.makeText(context, "Ошибка экспорта: ${t.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    String.format(exportErrorFmt, t.message ?: "unknown"),
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }
@@ -212,7 +224,11 @@ fun CurveEditorCard(
                     ).show()
                 }
             } catch (t: Throwable) {
-                Toast.makeText(context, "Ошибка импорта: ${t.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    String.format(importExceptionFmt, t.message ?: "unknown"),
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }
@@ -369,7 +385,7 @@ fun CurveEditorCard(
                             color = if (isSelected) {
                                 MaterialTheme.colorScheme.primaryContainer
                             } else {
-                                Color(0xFF0F172A)
+                                MaterialTheme.colorScheme.surface
                             },
                             modifier = Modifier
                                 .defaultMinSize(minHeight = 36.dp)
@@ -381,7 +397,7 @@ fun CurveEditorCard(
                                 }
                                 .border(
                                     width = 1.dp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF1E293B),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
                                     shape = RoundedCornerShape(10.dp)
                                 )
                                 .testTag("curve_profile_chip_${profile.id}")
@@ -391,7 +407,7 @@ fun CurveEditorCard(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFCBD5E1),
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 softWrap = false
                             )
@@ -400,15 +416,15 @@ fun CurveEditorCard(
 
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFF0F172A),
+                        color = MaterialTheme.colorScheme.surface,
                         modifier = Modifier
                             .defaultMinSize(minHeight = 36.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .clickable {
-                                dialogNameInput = "Профиль ${profiles.size + 1}"
+                                dialogNameInput = String.format(defaultNewProfileFmt, profiles.size + 1)
                                 showNewProfileDialog = true
                             }
-                            .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
                             .testTag("curve_add_profile_button")
                     ) {
                         Row(
@@ -419,14 +435,14 @@ fun CurveEditorCard(
                             Icon(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = stringResource(R.string.curve_new_profile_title),
-                                tint = Color(0xFF38BDF8),
+                                tint = MaterialTheme.colorScheme.secondary,
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
                                 text = stringResource(R.string.curve_new_profile_short),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF38BDF8)
+                                color = MaterialTheme.colorScheme.secondary
                             )
                         }
                     }
@@ -565,7 +581,7 @@ fun CurveEditorCard(
                         color = if (isSelected) {
                             MaterialTheme.colorScheme.primaryContainer
                         } else {
-                            Color(0xFF0F172A)
+                            MaterialTheme.colorScheme.surface
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -573,7 +589,7 @@ fun CurveEditorCard(
                             .clickable { selectedIndex = idx }
                             .border(
                                 width = 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF1E293B),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
                                 shape = RoundedCornerShape(8.dp)
                             )
                     ) {
@@ -585,7 +601,7 @@ fun CurveEditorCard(
                                 text = label,
                                 fontSize = 10.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFF94A3B8)
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                             )
                             Text(
                                 text = "${shownValue.roundToInt()}",
@@ -595,9 +611,9 @@ fun CurveEditorCard(
                                 color = if (isSelected) {
                                     MaterialTheme.colorScheme.primary
                                 } else if (isShowingStockReal) {
-                                    Color(0xFFFBBF24)
+                                    Color(0xFFF59E0B)
                                 } else {
-                                    Color(0xFFE2E8F0)
+                                    MaterialTheme.colorScheme.onSurface
                                 }
                             )
                         }

@@ -94,26 +94,37 @@ object DeviceCompatibility {
             }
         }
 
-        val statusText = when {
-            isOplus && supportedSdk -> "Совместимо • $romName"
-            isOplus && !supportedSdk -> "Требуется Android 12+ (текущий SDK: $sdk)"
-            !isOplus && supportedSdk -> "Другой производитель ($manufacturer)"
-            else -> "Нестандартная конфигурация"
+        val statusType = when {
+            isOplus && supportedSdk -> CompatibilityStatusType.COMPATIBLE
+            isOplus && !supportedSdk -> CompatibilityStatusType.OLD_ANDROID
+            !isOplus && supportedSdk -> CompatibilityStatusType.OTHER_VENDOR
+            else -> CompatibilityStatusType.UNSUPPORTED
+        }
+
+        val statusText = when (statusType) {
+            CompatibilityStatusType.COMPATIBLE -> "Compatible • $romName"
+            CompatibilityStatusType.OLD_ANDROID -> "Android 12+ required (SDK $sdk)"
+            CompatibilityStatusType.OTHER_VENDOR -> "Other OEM ($manufacturer)"
+            CompatibilityStatusType.UNSUPPORTED -> "Unsupported configuration"
         }
 
         val details = if (isOplus) {
-            "Обнаружена прошивка $romDetails. Перехватчик настроен под OplusAutomaticBrightnessController и постпроцессоры яркости."
+            "$romDetails • OplusAutomaticBrightnessController"
         } else {
-            "Модуль спроектирован специально для прошивок ColorOS / OxygenOS / Realme UI. На устройствах других брендов Oplus-контроллер отсутствует."
+            "Designed for ColorOS / OxygenOS / Realme UI"
         }
 
         return CompatibilityInfo(
             isCompatible = isOplus && supportedSdk,
+            statusType = statusType,
             statusText = statusText,
             details = details,
             deviceModel = displayModel,
             deviceCodename = deviceCodename,
             romVersion = romDetails,
+            romDisplayName = romName,
+            manufacturerName = manufacturer,
+            sdkInt = sdk,
             romMajor = romMajor,
             buildDisplayId = displayId,
             otaVersion = otaVersion,
@@ -123,13 +134,24 @@ object DeviceCompatibility {
     }
 }
 
+enum class CompatibilityStatusType {
+    COMPATIBLE,
+    OLD_ANDROID,
+    OTHER_VENDOR,
+    UNSUPPORTED
+}
+
 data class CompatibilityInfo(
     val isCompatible: Boolean,
+    val statusType: CompatibilityStatusType = CompatibilityStatusType.COMPATIBLE,
     val statusText: String,
     val details: String,
     val deviceModel: String,
     val deviceCodename: String = "",
     val romVersion: String = "",
+    val romDisplayName: String = "",
+    val manufacturerName: String = "",
+    val sdkInt: Int = Build.VERSION.SDK_INT,
     val romMajor: Int? = null,
     val buildDisplayId: String = "",
     val otaVersion: String = "",

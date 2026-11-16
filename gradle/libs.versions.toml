@@ -41,10 +41,12 @@ googleServices = "4.5.0"
 credentials = "1.5.0"
 googleid = "1.1.1"
 libxposed = "102.0.0"
+libxposedService = "102.0.0"
 
 
 [libraries]
 libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "libxposed" }
+libxposed-service = { group = "io.github.libxposed", name = "service", version.ref = "libxposedService" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

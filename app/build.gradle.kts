@@ -10,14 +10,14 @@ plugins {
 
 android {
   namespace = "com.banoku.oplus.autobrightness"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  compileSdk = 37
 
     defaultConfig {
         applicationId = "com.banoku.oplus.autobrightness"
         minSdk = 31
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.4.5"
+        versionCode = 20
+        versionName = "1.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -83,9 +83,10 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
-  // LibXposed API for LSPosed module
+  // LibXposed API & Service for Vector / LSPosed module
   compileOnly(libs.libxposed.api)
   testCompileOnly(libs.libxposed.api)
+  implementation(libs.libxposed.service)
 
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.activity.compose)

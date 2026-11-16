@@ -11,6 +11,9 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 
 object RootHelper {
@@ -32,12 +35,14 @@ object RootHelper {
     )
 
     private const val MODULE_LOG_CANDIDATES =
-        "/data/adb/vector/log/modules*.log /data/adb/lspd/log/modules*.log " +
+        "/data/adb/vector/log/modules*.log /data/adb/vector/log/verbose_*.log " +
+            "/data/adb/lsp/log/modules*.log /data/adb/lsp/log/verbose_*.log " +
+            "/data/adb/lspd/log/modules*.log " +
             "/data/adb/vector/log.old/modules*.log /data/adb/lspd/log.old/modules*.log " +
             "/data/adb/*/log/modules*.log"
 
     private const val MODULE_BOOT_PATTERN =
-        "AutoBrightnessGuard.*(starting, sdk=|Hook \\[|HOOK_SUMMARY:|STOCK_CURVE:)"
+        "AutoBrightnessGuard.*(starting, sdk=|Hook \\[|HOOK_SUMMARY:|STOCK_CURVE:|BLOCKED |GUARD_STATS:)"
 
     fun isRootAvailable(): Boolean {
         for (path in SU_CANDIDATE_PATHS) {
@@ -191,13 +196,12 @@ object RootHelper {
     }
 
     suspend fun readModuleLogs(): List<LogEntry> = withContext(Dispatchers.IO) {
-        // 1. Check the most recent LSPosed / Vector / JingMatrix / ReLSPosed module log file safely.
-        // Guard `[ -n "$f" ]` ensures we never invoke cat/grep on empty filename.
-        // Also fetch boot/hook summary lines so long uptime does not evict hook verification past tail -n 150.
+        // 1. Check the most recent Vector / LSPosed / ReLSPosed module log file safely.
+        // Pinned grep preserves boot summary, hook status, STOCK_CURVE, BLOCKED resets & GUARD_STATS across long uptime.
         val latestCmd =
             "f=\$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 1); " +
                 "if [ -n \"\$f\" ] && [ -r \"\$f\" ]; then " +
-                "grep -iE '$MODULE_BOOT_PATTERN' \"\$f\" 2>/dev/null | tail -n 30; " +
+                "grep -iE '$MODULE_BOOT_PATTERN' \"\$f\" 2>/dev/null | tail -n 50; " +
                 "grep -i AutoBrightnessGuard \"\$f\" 2>/dev/null | tail -n 150; " +
                 "fi"
         var result = executeSuCommand(latestCmd)
@@ -205,18 +209,18 @@ object RootHelper {
             return@withContext parseLogs(result.output).reversed()
         }
 
-        // 2. Fallback across all rotated LSPosed / Vector log files
+        // 2. Fallback across all rotated Vector / LSPosed log files
         val wildcardCmd =
-            "grep -ihE '$MODULE_BOOT_PATTERN' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 30; " +
+            "grep -ihE '$MODULE_BOOT_PATTERN' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 50; " +
                 "grep -ih AutoBrightnessGuard $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 150"
         result = executeSuCommand(wildcardCmd)
         if (result.output.isNotBlank()) {
             return@withContext parseLogs(result.output).reversed()
         }
 
-        // 3. Logcat across all buffers via grep (catches both AutoBrightnessGuard tag AND LSPosedFramework/VectorDaemon)
+        // 3. Logcat across all buffers via grep (catches AutoBrightnessGuard across system_server)
         val logcatGrepCmd =
-            "logcat -d -b all 2>/dev/null | grep -iE '$MODULE_BOOT_PATTERN' | tail -n 30; " +
+            "logcat -d -b all 2>/dev/null | grep -iE '$MODULE_BOOT_PATTERN' | tail -n 50; " +
                 "logcat -d -b all 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 150"
         result = executeSuCommand(logcatGrepCmd)
         if (result.output.isNotBlank()) {
@@ -747,6 +751,11 @@ object RootHelper {
                 message = "GUARD hysteresis (1.8x) at 45.0 lx: [34.0..58.0] -> [23.2..72.4]"
             ),
             LogEntry(
+                type = LogType.INFO,
+                time = "20:15:04",
+                message = "GUARD_STATS:reset=1,ambient=1,drift=4,debounce=3,floor=2,darkenv=1,dimming=2,aux=3,hyst=5,curve=6,pwm=0,last_block_ms=0"
+            ),
+            LogEntry(
                 type = LogType.PASS,
                 time = "23:14:01",
                 message = "passed resetAutoBrightness #1 from VMStack.getThreadStackTrace"
@@ -755,14 +764,116 @@ object RootHelper {
     }
 
     fun computeStats(logs: List<LogEntry>): GuardStats {
+        if (logs.isEmpty()) return GuardStats(0, "", "")
+
+        val chrono = logs.asReversed()
+        val startIdx = chrono.indexOfLast {
+            it.message.contains("starting, sdk=", ignoreCase = true)
+        }
+        val session = if (startIdx >= 0) chrono.subList(startIdx, chrono.size) else chrono
+
         val blockedLogs = logs.filter { it.type == LogType.BLOCKED }
-        val count = blockedLogs.size
-        // Logs are ordered newest-first, so the first BLOCKED item is the most recent.
-        val latest = blockedLogs.firstOrNull()
+        val latestBlocked = blockedLogs.firstOrNull()
+
+        var logReset = 0
+        var logAmbient = 0
+        var logDrift = 0
+        var logFloorDark = 0
+        var logCurve = 0
+        var logStabilitySensors = 0
+
+        for (entry in session) {
+            val msg = entry.message
+            when {
+                msg.contains("BLOCKED resetAutoBrightness") -> logReset++
+                msg.contains("BLOCKED resetAmbientAdapter") -> logAmbient++
+                msg.contains("anti-drift suppressed") -> logDrift++
+                msg.contains("DarkEnv") || msg.contains("floor clamped") -> logFloorDark++
+                msg.contains("CURVE override") -> logCurve++
+                msg.contains("debounce accelerateScale") ||
+                    msg.contains("per-app dimming") ||
+                    msg.contains("dual-sensor smoothed") ||
+                    msg.contains("GUARD hysteresis") ||
+                    msg.contains("GUARD PWM sensor") -> logStabilitySensors++
+            }
+        }
+
+        // Parse GUARD_STATS: snapshots emitted by AutoBrightnessModule (immune to buffer tail eviction)
+        var bestSnapshot: Map<String, Long>? = null
+        var bestSum = -1L
+        for (entry in session) {
+            val idx = entry.message.indexOf("GUARD_STATS:")
+            if (idx >= 0) {
+                val payload = entry.message.substring(idx + "GUARD_STATS:".length).trim()
+                val map = HashMap<String, Long>(14)
+                payload.split(',').forEach { token ->
+                    val eq = token.indexOf('=')
+                    if (eq > 0) {
+                        val k = token.substring(0, eq).trim()
+                        val v = token.substring(eq + 1).trim().toLongOrNull()
+                        if (v != null && v >= 0L) map[k] = v
+                    }
+                }
+                val sum = listOf(
+                    "reset", "ambient", "drift", "debounce", "floor",
+                    "darkenv", "dimming", "aux", "hyst", "curve", "pwm"
+                ).sumOf { map[it] ?: 0L }
+                if (sum >= bestSum) {
+                    bestSum = sum
+                    bestSnapshot = map
+                }
+            }
+        }
+
+        val statsReset = (bestSnapshot?.get("reset") ?: 0L).toInt()
+        val statsAmbient = (bestSnapshot?.get("ambient") ?: 0L).toInt()
+        val statsDrift = (bestSnapshot?.get("drift") ?: 0L).toInt()
+        val statsDebounce = (bestSnapshot?.get("debounce") ?: 0L).toInt()
+        val statsFloor = (bestSnapshot?.get("floor") ?: 0L).toInt()
+        val statsDarkEnv = (bestSnapshot?.get("darkenv") ?: 0L).toInt()
+        val statsDimming = (bestSnapshot?.get("dimming") ?: 0L).toInt()
+        val statsAux = (bestSnapshot?.get("aux") ?: 0L).toInt()
+        val statsHyst = (bestSnapshot?.get("hyst") ?: 0L).toInt()
+        val statsCurve = (bestSnapshot?.get("curve") ?: 0L).toInt()
+        val statsPwm = (bestSnapshot?.get("pwm") ?: 0L).toInt()
+        val lastBlockMs = bestSnapshot?.get("last_block_ms") ?: 0L
+
+        val resetCount = maxOf(logReset, statsReset)
+        val ambientCount = maxOf(logAmbient, statsAmbient)
+        val totalBlocked = maxOf(blockedLogs.size, resetCount + ambientCount)
+
+        val antiDriftCount = maxOf(logDrift, statsDrift)
+        val floorDarkCount = maxOf(logFloorDark, statsFloor + statsDarkEnv)
+        val curveCount = maxOf(logCurve, statsCurve)
+        val stabilitySensorsCount = maxOf(
+            logStabilitySensors,
+            statsDebounce + statsDimming + statsAux + statsHyst + statsPwm
+        )
+        val totalGuardInterventions = antiDriftCount + floorDarkCount + curveCount + stabilitySensorsCount
+
+        val resolvedLastTime = latestBlocked?.time?.takeIf { it.isNotBlank() }
+            ?: if (lastBlockMs > 0L) {
+                try {
+                    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(lastBlockMs))
+                } catch (_: Throwable) {
+                    ""
+                }
+            } else {
+                ""
+            }
+
         return GuardStats(
-            totalBlocked = count,
-            lastBlockedTime = latest?.time ?: "",
-            lastBlockedMessage = latest?.message ?: ""
+            totalBlocked = totalBlocked,
+            lastBlockedTime = resolvedLastTime,
+            lastBlockedMessage = latestBlocked?.message ?: "",
+            resetBlockedCount = resetCount,
+            ambientBlockedCount = ambientCount,
+            totalGuardInterventions = totalGuardInterventions,
+            antiDriftCount = antiDriftCount,
+            floorAndDarkEnvCount = floorDarkCount,
+            customCurveCount = curveCount,
+            stabilityAndSensorsCount = stabilitySensorsCount,
+            hasExactModuleStats = bestSnapshot != null
         )
     }
 
@@ -807,7 +918,7 @@ object RootHelper {
                 installedCount = 0,
                 totalCount = hookTitles.size,
                 hooks = hookTitles.map { (id, title) ->
-                    HookStatusItem(id, title, HookState.UNKNOWN, "Нет данных из system_server")
+                    HookStatusItem(id, title, HookState.UNKNOWN, "")
                 }
             )
         }
@@ -899,14 +1010,9 @@ object RootHelper {
 
         val items = hookTitles.map { (id, title) ->
             val state = stateMap[id] ?: HookState.UNKNOWN
-            val baseDetail = detailMap[id] ?: when (state) {
-                HookState.INSTALLED -> "Команда найдена в системе"
-                HookState.SKIPPED -> "Метод не найден в этой прошивке"
-                HookState.UNKNOWN -> "Ожидание старта / лога"
-            }
+            val baseDetail = detailMap[id].orEmpty()
             val hits = hitMap[id] ?: 0
-            val fullDetail = if (hits > 0) "$baseDetail • срабатываний: $hits" else baseDetail
-            HookStatusItem(id = id, name = title, state = state, details = fullDetail, runtimeHits = hits)
+            HookStatusItem(id = id, name = title, state = state, details = baseDetail, runtimeHits = hits)
         }
 
         val detected = startEntry != null || stateMap.isNotEmpty()
@@ -1002,7 +1108,15 @@ data class LogEntry(
 data class GuardStats(
     val totalBlocked: Int,
     val lastBlockedTime: String,
-    val lastBlockedMessage: String
+    val lastBlockedMessage: String,
+    val resetBlockedCount: Int = 0,
+    val ambientBlockedCount: Int = 0,
+    val totalGuardInterventions: Int = 0,
+    val antiDriftCount: Int = 0,
+    val floorAndDarkEnvCount: Int = 0,
+    val customCurveCount: Int = 0,
+    val stabilityAndSensorsCount: Int = 0,
+    val hasExactModuleStats: Boolean = false
 )
 
 enum class LogType {

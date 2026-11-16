@@ -18,7 +18,7 @@ public final class BrightnessMath {
     public static final int CURVE_POINT_COUNT = 7;
     public static final float MIN_CURVE_NIT = 2.0f;
     public static final float MAX_CURVE_NIT = 3500.0f;
-    public static final float MAX_CUSTOM_FLOOR_NIT = 200.0f;
+    public static final float MAX_CUSTOM_FLOOR_NIT = 150.0f;
 
     /**
      * Canonical 7-point ambient lux breakpoints spanning dark room -> bright sunlight.

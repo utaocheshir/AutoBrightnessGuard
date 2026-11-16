@@ -65,6 +65,7 @@ import com.banoku.oplus.autobrightness.AutoBrightnessModule
 import com.banoku.oplus.autobrightness.R
 import com.banoku.oplus.autobrightness.util.DisplayCalibration
 import com.banoku.oplus.autobrightness.util.RootHelper
+import com.banoku.oplus.autobrightness.util.XposedBridgeClient
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -437,23 +438,35 @@ fun LightSensorsCard(
                         SensorRole.MAIN -> {
                             mainSensorDisabled = disabled
                             if (disabled) onPrimaryLuxChanged(null)
-                            prefs.edit().putBoolean("pref_disable_main_sensor", disabled).apply()
                             scope.launch {
-                                RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR, disabled)
+                                XposedBridgeClient.syncBoolean(
+                                    prefs,
+                                    "pref_disable_main_sensor",
+                                    AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR,
+                                    disabled
+                                )
                             }
                         }
                         SensorRole.AUX -> {
                             auxSensorDisabled = disabled
-                            prefs.edit().putBoolean("pref_disable_aux_sensor", disabled).apply()
                             scope.launch {
-                                RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR, disabled)
+                                XposedBridgeClient.syncBoolean(
+                                    prefs,
+                                    "pref_disable_aux_sensor",
+                                    AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR,
+                                    disabled
+                                )
                             }
                         }
                         SensorRole.PWM -> {
                             pwmSensorDisabled = disabled
-                            prefs.edit().putBoolean("pref_disable_pwm_sensor", disabled).apply()
                             scope.launch {
-                                RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_PWM_SENSOR, disabled)
+                                XposedBridgeClient.syncBoolean(
+                                    prefs,
+                                    "pref_disable_pwm_sensor",
+                                    AutoBrightnessModule.PROP_DISABLE_PWM_SENSOR,
+                                    disabled
+                                )
                             }
                         }
                     }

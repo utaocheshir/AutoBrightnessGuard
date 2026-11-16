@@ -1,5 +1,6 @@
 package com.banoku.oplus.autobrightness;
 
+import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.os.Build;
@@ -17,38 +18,30 @@ import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Auto Brightness Guard 1.4.1 (ColorOS 17 / OxygenOS 12-17 Edition).
+ * Auto Brightness Guard 1.5.0 (Vector Framework + LSPosed Universal Edition).
  *
- * Verified hooks against ColorOS 17 oplus-services.jar:
- * 1. Curve Reset Guard: OplusAutomaticBrightnessController.resetAutoBrightness() AND
- *    resetAutoBrightness(int resetType) (ColorOS 17 calls resetAutoBrightness(1) when
- *    isBrightnessDragOptSupport() is enabled, bypassing the 0-arg method).
- * 2. Ambient Adapter Guard: OplusBrightnessAmbientAdapter.resetAmbientAdapter(String reason)
- *    blocking "AutoReset" and "resetAutoBrightness" triggered from AlarmManager timers.
- * 3. Anti-Drift Stability Guard: OplusBrightnessAmbientAdapter.handleStableForceChange() and
- *    handleSmallChangeAnimating() returning Float.NaN (unless isResetForceUpdate() is true)
- *    to stop brightness drifting/pumping under steady room lighting.
- * 4. Debounce Window Lock: StabilityProcess.getAccelerateScale(...) clamped to <= 1.0f so
- *    LuxQueueProcess keeps full SceneConfig debounce windows without micro-tremor jitter.
- * 5. Night Reading Floor & Manual Unconditional Floor + Dark-Env Guard:
- *    - OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing(Builder) returns true to stop
- *      progressive dimming after 20 minutes in dark environments.
- *    - OplusBrightnessPostProcessingManager.convertNitToBrightness(Builder) enforces either
- *      automatic 8.5 nit night floor OR an unconditional manual custom minimum nit floor.
- * 6. Per-App Smart Dimming Bypass: OplusFeatureReduceBrightness.isReduceDisabled() returns true
- *    to prevent AppFossReduceConfig brightness penalties in browsers/messengers.
+ * Dual-Channel Config & Telemetry:
+ * - Primary IPC: LibXposed RemotePreferences ("autobrightness_config") on Vector / modern LSPosed.
+ * - Fallback IPC: Android SystemProperties (persist.autobrightness.*) for legacy/Magisk LSPosed.
+ * - Live Telemetry: Throttled GUARD_STATS snapshots preserve counters past tail buffers.
+ *
+ * Verified 10/10 hooks against ColorOS 12-17 / OxygenOS oplus-services.jar:
+ * 1. Curve Reset Guard: OplusAutomaticBrightnessController.resetAutoBrightness() & (int)
+ * 2. Ambient Adapter Guard: OplusBrightnessAmbientAdapter.resetAmbientAdapter(String)
+ * 3. Anti-Drift Stability Guard: handleStableForceChange() & handleSmallChangeAnimating()
+ * 4. Debounce Window Lock: StabilityProcess.getAccelerateScale(...) <= 1.0f
+ * 5. Night Reading / Custom Unconditional Floor + Dark-Env 20-min Dimming Guard
+ * 6. Per-App Smart Dimming Bypass: OplusFeatureReduceBrightness.isReduceDisabled()
  * 7. Dual 360° Aux Sensor Balancer: LuxEvent$LuxEventResult.calculateAuxLux(mainLux, auxLux)
- *    smooths indoor rear-sensor reflections instead of jumping directly to raw auxLux.
- * 8. Hysteresis Dead-Zone Widener: StabilityProcess.getLargeChangeLimit(float) and
- *    getLargeChangeLimitForSpecialLight(float) widen lux dead-zone bounds by configurable
- *    persist.autobrightness.hysteresis scale (1.0x..3.0x) to prevent micro-fluctuation pumping.
+ * 8. Hysteresis Dead-Zone Widener: StabilityProcess.getLargeChangeLimit*(float)
  * 9. Live Custom Curve Override: OplusDisplayBrightnessModel.getValueByCurve(String, float)
- *    evaluates user-edited 7-point lux->nit curve from persist.autobrightness.curve in real time.
+ * 10. Under-Display PWM Sensor Guard: SystemSensorManager$SensorEventQueue (high_pwm_rgb)
  */
 public class AutoBrightnessModule extends XposedModule {
 
     public static final String TAG = "AutoBrightnessGuard";
-    public static final String VERSION = "1.4.5";
+    public static final String VERSION = "1.5.0";
+    public static final String REMOTE_PREFS_GROUP = "autobrightness_config";
 
     // Legacy toggles (SystemProperties)
     public static final String PROP_BLOCK_RESET = "persist.autobrightness.block_reset";
@@ -105,6 +98,7 @@ public class AutoBrightnessModule extends XposedModule {
     private static final float MAX_AUX_INDOOR_LUX = BrightnessMath.MAX_AUX_INDOOR_LUX;
     private static final int MAX_PASS_LOGS = 10;
     private static final int CALLER_FRAMES = 6;
+    private static final long STATS_LOG_INTERVAL_MS = 60_000L;
 
     private final AtomicInteger blockedReset = new AtomicInteger();
     private final AtomicInteger passedReset = new AtomicInteger();
@@ -118,6 +112,22 @@ public class AutoBrightnessModule extends XposedModule {
     private final AtomicInteger widenedHysteresis = new AtomicInteger();
     private final AtomicInteger appliedCustomCurve = new AtomicInteger();
     private final AtomicInteger blockedPwmSensor = new AtomicInteger();
+
+    // Dual-channel config: Vector/LibXposed RemotePreferences + SystemProperties fallback
+    private volatile SharedPreferences mRemotePrefs;
+    private final SharedPreferences.OnSharedPreferenceChangeListener mRemotePrefsListener =
+            (prefs, key) -> {
+                if ("pref_curve_config".equals(key)) {
+                    mLastRawCurve = "";
+                } else if ("pref_disable_pwm_sensor".equals(key)) {
+                    mLastPwmPropCheckMs = 0L;
+                }
+            };
+
+    // Compact live protection stats throttling (piggybacked on existing calls, zero background threads)
+    private volatile long mLastStatsLogMs = 0L;
+    private volatile long mLastLoggedTotalEvents = -1L;
+    private volatile long mLastBlockedEpochMs = 0L;
 
     // Cached reflection handles (avoid repeated Class.forName in hot brightness paths)
     private static volatile Method sSpGetBoolean;
@@ -152,8 +162,9 @@ public class AutoBrightnessModule extends XposedModule {
 
     @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
-        note(Log.INFO, "v" + VERSION + " (ColorOS 17 Verified Engine) starting, sdk=" + Build.VERSION.SDK_INT
-                + ", build=" + Build.FINGERPRINT);
+        initRemotePreferences();
+        note(Log.INFO, "v" + VERSION + " (Vector/LSPosed Verified Engine) starting, sdk=" + Build.VERSION.SDK_INT
+                + ", remote=" + (mRemotePrefs != null) + ", build=" + Build.FINGERPRINT);
 
         ClassLoader cl = param.getClassLoader();
         initReflectionCaches(cl);
@@ -201,10 +212,25 @@ public class AutoBrightnessModule extends XposedModule {
                 + ",sdk=" + Build.VERSION.SDK_INT + ",hooks=" + summary);
 
         // Log whether custom curve is active immediately on boot
-        String bootCurve = getPropertyString(PROP_CURVE_CONFIG, "");
+        String bootCurve = getStringSetting("pref_curve_config", PROP_CURVE_CONFIG, "");
         if (!bootCurve.isEmpty()) {
             BrightnessMath.CurveConfig parsedBoot = BrightnessMath.parseCurveConfig(bootCurve);
             note(Log.INFO, "Boot custom curve state: enabled=" + parsedBoot.enabled + " raw=" + bootCurve);
+        }
+    }
+
+    private void initRemotePreferences() {
+        try {
+            long props = getFrameworkProperties();
+            if ((props & XposedInterface.PROP_CAP_REMOTE) != 0) {
+                SharedPreferences rp = getRemotePreferences(REMOTE_PREFS_GROUP);
+                if (rp != null) {
+                    rp.registerOnSharedPreferenceChangeListener(mRemotePrefsListener);
+                    mRemotePrefs = rp;
+                }
+            }
+        } catch (Throwable ignored) {
+            mRemotePrefs = null;
         }
     }
 
@@ -492,13 +518,13 @@ public class AutoBrightnessModule extends XposedModule {
     private final class ResetGuard implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!isPropertyEnabled(PROP_BLOCK_RESET, true)) {
+            if (!getBoolSetting("pref_block_reset", PROP_BLOCK_RESET, true)) {
                 return chain.proceed();
             }
 
             String rule = null;
             StackTraceElement[] stack = null;
-            boolean strictAlarm = isPropertyEnabled(PROP_STRICT_ALARM, false);
+            boolean strictAlarm = getBoolSetting("pref_strict_alarm", PROP_STRICT_ALARM, false);
             try {
                 stack = Thread.currentThread().getStackTrace();
                 rule = matchAlarmContext(stack, strictAlarm);
@@ -506,11 +532,13 @@ public class AutoBrightnessModule extends XposedModule {
 
             if (rule != null) {
                 int n = blockedReset.incrementAndGet();
+                mLastBlockedEpochMs = System.currentTimeMillis();
                 note(Log.WARN, "BLOCKED resetAutoBrightness #" + n + " (rule=" + rule + ")");
+                maybeLogCompactStats(true);
                 return null;
             }
 
-            boolean verbose = isPropertyEnabled(PROP_VERBOSE_LOG, false);
+            boolean verbose = getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false);
             int p = passedReset.incrementAndGet();
             if (verbose || p <= MAX_PASS_LOGS) {
                 note(Log.INFO, "passed resetAutoBrightness #" + p + " from " + formatCallers(stack));
@@ -525,7 +553,7 @@ public class AutoBrightnessModule extends XposedModule {
     private final class AmbientAdapterGuard implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!isPropertyEnabled(PROP_BLOCK_AMBIENT, true)) {
+            if (!getBoolSetting("pref_block_ambient", PROP_BLOCK_AMBIENT, true)) {
                 return chain.proceed();
             }
 
@@ -537,17 +565,19 @@ public class AutoBrightnessModule extends XposedModule {
 
             boolean isResetReason = "resetAutoBrightness".equalsIgnoreCase(reason)
                     || "AutoReset".equalsIgnoreCase(reason)
-                    || (reason != null && reason.toLowerCase().contains("reset"));
+                    || (reason != null && reason.toLowerCase(Locale.US).contains("reset"));
 
             String rule = null;
-            boolean strictAlarm = isPropertyEnabled(PROP_STRICT_ALARM, false);
+            boolean strictAlarm = getBoolSetting("pref_strict_alarm", PROP_STRICT_ALARM, false);
             try {
                 rule = matchAlarmContext(Thread.currentThread().getStackTrace(), strictAlarm);
             } catch (Throwable ignored) { }
 
             if (isResetReason || rule != null) {
                 int n = blockedAmbient.incrementAndGet();
+                mLastBlockedEpochMs = System.currentTimeMillis();
                 note(Log.WARN, "BLOCKED resetAmbientAdapter #" + n + " (reason=" + reason + ", rule=" + rule + ")");
+                maybeLogCompactStats(true);
                 return null;
             }
             return chain.proceed();
@@ -567,7 +597,7 @@ public class AutoBrightnessModule extends XposedModule {
 
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!isPropertyEnabled(PROP_STABILITY_GUARD, true)) {
+            if (!getBoolSetting("pref_stability_guard", PROP_STABILITY_GUARD, true)) {
                 return chain.proceed();
             }
 
@@ -580,9 +610,10 @@ public class AutoBrightnessModule extends XposedModule {
                     }
                 }
                 int n = stabilizedDrift.incrementAndGet();
-                if (n == 1 || (n % 50 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                if (n == 1 || (n % 50 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                     note(Log.INFO, "GUARD anti-drift suppressed " + sourceName + " #" + n);
                 }
+                maybeLogCompactStats(false);
                 return Float.NaN;
             } catch (Throwable ignored) {
                 return chain.proceed();
@@ -598,16 +629,17 @@ public class AutoBrightnessModule extends XposedModule {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
             Object result = chain.proceed();
-            if (!isPropertyEnabled(PROP_DEBOUNCE_LOCK, true)) {
+            if (!getBoolSetting("pref_debounce_lock", PROP_DEBOUNCE_LOCK, true)) {
                 return result;
             }
             if (result instanceof Float) {
                 float scale = (Float) result;
                 if (scale > 1.0f) {
                     int n = lockedDebounce.incrementAndGet();
-                    if (n == 1 || (n % 100 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                    if (n == 1 || (n % 100 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                         note(Log.INFO, "GUARD debounce accelerateScale clamped " + scale + " -> 1.0 (#" + n + ")");
                     }
+                    maybeLogCompactStats(false);
                     return 1.0f;
                 }
             }
@@ -622,32 +654,33 @@ public class AutoBrightnessModule extends XposedModule {
     private final class DarkEnvSkipHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            boolean autoFloor = isPropertyEnabled(PROP_MIN_FLOOR, true);
-            float customFloor = getPropertyFloat(PROP_CUSTOM_MIN_NIT, 0f, 0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT);
+            boolean autoFloor = getBoolSetting("pref_min_floor", PROP_MIN_FLOOR, true);
+            float customFloor = getFloatSetting("pref_custom_min_nit", PROP_CUSTOM_MIN_NIT, 0f, 0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT);
             if (!autoFloor && customFloor <= 0f) {
                 return chain.proceed();
             }
             int n = skippedDarkEnv.incrementAndGet();
-            if (n == 1 || (n % 200 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+            if (n == 1 || (n % 200 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                 note(Log.INFO, "GUARD skipped DarkEnv 20-min progressive dimming (#" + n + ")");
             }
+            maybeLogCompactStats(false);
             return Boolean.TRUE;
         }
     }
 
     /**
      * 5b. Night Reading Floor OR Unconditional Manual Floor:
-     * - When PROP_MIN_FLOOR is true: enforces >= 8.5 nits in auto mode (luxValid && !isDragging).
-     * - When PROP_MIN_FLOOR is false and persist.autobrightness.custom_min_nit > 0:
+     * - When PROP_MIN_FLOOR / pref_min_floor is true: enforces >= 8.5 nits in auto mode (luxValid && !isDragging).
+     * - When PROP_MIN_FLOOR / pref_min_floor is false and custom_min_nit > 0:
      *   UNCONDITIONALLY prevents backlight nits from dropping below custom_min_nit while screen is lit (nit > 0).
      */
     private final class NightNitFloorHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            boolean autoFloor = isPropertyEnabled(PROP_MIN_FLOOR, true);
+            boolean autoFloor = getBoolSetting("pref_min_floor", PROP_MIN_FLOOR, true);
             float customFloor = autoFloor
                     ? 0f
-                    : getPropertyFloat(PROP_CUSTOM_MIN_NIT, 0f, 0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT);
+                    : getFloatSetting("pref_custom_min_nit", PROP_CUSTOM_MIN_NIT, 0f, 0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT);
 
             if (!autoFloor && customFloor <= 0f) {
                 return chain.proceed();
@@ -683,10 +716,11 @@ public class AutoBrightnessModule extends XposedModule {
                             }
 
                             int n = clampedBrightness.incrementAndGet();
-                            if (n == 1 || (n % 100 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                            if (n == 1 || (n % 100 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                                 String modeTag = autoFloor ? "night floor" : "manual unconditional floor";
                                 note(Log.INFO, "GUARD " + modeTag + " clamped " + nit + " -> " + targetFloor + " nits (#" + n + ")");
                             }
+                            maybeLogCompactStats(false);
                         }
                     }
                 }
@@ -702,13 +736,14 @@ public class AutoBrightnessModule extends XposedModule {
     private final class SmartDimmingBypassHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!isPropertyEnabled(PROP_DISABLE_SMART_DIMMING, true)) {
+            if (!getBoolSetting("pref_disable_smart_dimming", PROP_DISABLE_SMART_DIMMING, true)) {
                 return chain.proceed();
             }
             int n = bypassedAppDimming.incrementAndGet();
-            if (n == 1 || (n % 200 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+            if (n == 1 || (n % 200 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                 note(Log.INFO, "GUARD bypassed OplusFeatureReduceBrightness per-app dimming (#" + n + ")");
             }
+            maybeLogCompactStats(false);
             return Boolean.TRUE;
         }
     }
@@ -722,9 +757,9 @@ public class AutoBrightnessModule extends XposedModule {
     private final class DualSensorAuxHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            boolean disableAux = isPropertyEnabled(PROP_DISABLE_AUX_SENSOR, false);
-            boolean disableMain = isPropertyEnabled(PROP_DISABLE_MAIN_SENSOR, false);
-            boolean dualGuard = isPropertyEnabled(PROP_DUAL_SENSOR_GUARD, true);
+            boolean disableAux = getBoolSetting("pref_disable_aux_sensor", PROP_DISABLE_AUX_SENSOR, false);
+            boolean disableMain = getBoolSetting("pref_disable_main_sensor", PROP_DISABLE_MAIN_SENSOR, false);
+            boolean dualGuard = getBoolSetting("pref_dual_sensor_guard", PROP_DUAL_SENSOR_GUARD, true);
 
             if (!disableAux && !disableMain && !dualGuard) {
                 mLastAuxEmaLux = Float.NaN;
@@ -749,9 +784,10 @@ public class AutoBrightnessModule extends XposedModule {
                     mLastAuxEmaLux = smoothed;
 
                     int n = smoothedAuxSensor.incrementAndGet();
-                    if (n == 1 || (n % 50 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                    if (n == 1 || (n % 50 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                         note(Log.INFO, "GUARD dual-sensor smoothed auxLux (" + mainLux + ", " + auxLux + ") -> " + smoothed);
                     }
+                    maybeLogCompactStats(false);
                     return smoothed;
                 }
                 mLastAuxEmaLux = Float.isNaN(auxLux) ? mainLux : Math.max(mainLux, auxLux);
@@ -776,7 +812,8 @@ public class AutoBrightnessModule extends XposedModule {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
             Object pair = chain.proceed();
-            float scale = getPropertyFloat(
+            float scale = getFloatSetting(
+                    "pref_hysteresis_scale",
                     PROP_HYSTERESIS,
                     BrightnessMath.DEFAULT_HYSTERESIS_SCALE,
                     BrightnessMath.MIN_HYSTERESIS_SCALE,
@@ -797,10 +834,11 @@ public class AutoBrightnessModule extends XposedModule {
                     if (widened[0] != left || widened[1] != right) {
                         Object widenedPair = mOplusPairCreate.invoke(null, pairTag, widened[0], widened[1]);
                         int n = widenedHysteresis.incrementAndGet();
-                        if (n == 1 || (n % 100 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                        if (n == 1 || (n % 100 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                             note(Log.INFO, "GUARD hysteresis (" + scale + "x) at " + targetLux
                                     + " lx: [" + left + ".." + right + "] -> [" + widened[0] + ".." + widened[1] + "]");
                         }
+                        maybeLogCompactStats(false);
                         return widenedPair;
                     }
                 }
@@ -812,7 +850,7 @@ public class AutoBrightnessModule extends XposedModule {
 
     /**
      * 9. Live Custom Curve Override: evaluates user's 7-point lux->nit curve from
-     * persist.autobrightness.curve inside OplusDisplayBrightnessModel.getValueByCurve("", lux).
+     * RemotePreferences / persist.autobrightness.curve inside OplusDisplayBrightnessModel.getValueByCurve("", lux).
      * Uses cached CurveConfig so zero heap allocations occur unless the user modifies a slider.
      */
     private final class CustomCurveHook implements XposedInterface.Hooker {
@@ -848,7 +886,7 @@ public class AutoBrightnessModule extends XposedModule {
                 boolean isPrimaryCurve = name != null
                         && (name.isEmpty() || "default".equalsIgnoreCase(name) || "normal".equalsIgnoreCase(name));
                 if (name != null && name.isEmpty()) {
-                    String raw = getPropertyString(PROP_CURVE_CONFIG, "");
+                    String raw = getStringSetting("pref_curve_config", PROP_CURVE_CONFIG, "");
                     if (!raw.equals(mLastRawCurve)) {
                         mCachedCurveConfig = BrightnessMath.parseCurveConfig(raw);
                         mLastRawCurve = raw;
@@ -866,9 +904,10 @@ public class AutoBrightnessModule extends XposedModule {
                         }
                         maybeSampleStockCurve(chain, name);
                         int n = appliedCustomCurve.incrementAndGet();
-                        if (n == 1 || (n % 200 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                        if (n == 1 || (n % 200 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                             note(Log.INFO, "CURVE override lux=" + lux + " -> " + customNit + " nits (#" + n + ")");
                         }
+                        maybeLogCompactStats(false);
                         return customNit;
                     } else {
                         Object stockResult = chain.proceed();
@@ -888,14 +927,14 @@ public class AutoBrightnessModule extends XposedModule {
 
     /**
      * 10. Under-Display PWM Sensor Guard: suppresses SensorEventQueue.dispatchSensorEvent
-     * inside system_server for the under-display high_pwm_rgb (tcs3720) sensor when
-     * persist.autobrightness.disable_pwm_sensor=1, with near-zero overhead on other sensors.
+     * inside system_server for the under-display high_pwm_rgb (tcs3720) sensor when disabled,
+     * with near-zero overhead on other sensors.
      */
     private final class PwmSensorGuardHook implements XposedInterface.Hooker {
         private boolean isPwmDisabledCached() {
             long now = SystemClock.elapsedRealtime();
             if (mLastPwmPropCheckMs == 0L || (now - mLastPwmPropCheckMs) >= 500L) {
-                mCachedPwmDisabled = isPropertyEnabled(PROP_DISABLE_PWM_SENSOR, false);
+                mCachedPwmDisabled = getBoolSetting("pref_disable_pwm_sensor", PROP_DISABLE_PWM_SENSOR, false);
                 mLastPwmPropCheckMs = now;
             }
             return mCachedPwmDisabled;
@@ -943,9 +982,10 @@ public class AutoBrightnessModule extends XposedModule {
 
                 if (isPwm && isPwmDisabledCached()) {
                     int n = blockedPwmSensor.incrementAndGet();
-                    if (n == 1 || (n % 200 == 1 && isPropertyEnabled(PROP_VERBOSE_LOG, false))) {
+                    if (n == 1 || (n % 200 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
                         note(Log.INFO, "GUARD PWM sensor (high_pwm) blocked (#" + n + ")");
                     }
+                    maybeLogCompactStats(false);
                     return null;
                 }
             } catch (Throwable ignored) { }
@@ -960,6 +1000,79 @@ public class AutoBrightnessModule extends XposedModule {
 
     public static float smoothIndoorAuxLux(float mainLux, float auxLux) {
         return BrightnessMath.smoothIndoorAuxLux(mainLux, auxLux);
+    }
+
+    private void maybeLogCompactStats(boolean force) {
+        long total = (long) blockedReset.get() + blockedAmbient.get() + stabilizedDrift.get()
+                + lockedDebounce.get() + clampedBrightness.get() + skippedDarkEnv.get()
+                + bypassedAppDimming.get() + smoothedAuxSensor.get() + widenedHysteresis.get()
+                + appliedCustomCurve.get() + blockedPwmSensor.get();
+        if (total == mLastLoggedTotalEvents) {
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (!force && mLastStatsLogMs != 0L && (now - mLastStatsLogMs) < STATS_LOG_INTERVAL_MS) {
+            return;
+        }
+        mLastStatsLogMs = now;
+        mLastLoggedTotalEvents = total;
+        note(Log.INFO, "GUARD_STATS:reset=" + blockedReset.get()
+                + ",ambient=" + blockedAmbient.get()
+                + ",drift=" + stabilizedDrift.get()
+                + ",debounce=" + lockedDebounce.get()
+                + ",floor=" + clampedBrightness.get()
+                + ",darkenv=" + skippedDarkEnv.get()
+                + ",dimming=" + bypassedAppDimming.get()
+                + ",aux=" + smoothedAuxSensor.get()
+                + ",hyst=" + widenedHysteresis.get()
+                + ",curve=" + appliedCustomCurve.get()
+                + ",pwm=" + blockedPwmSensor.get()
+                + ",last_block_ms=" + mLastBlockedEpochMs);
+    }
+
+    private boolean getBoolSetting(String remoteKey, String propKey, boolean defaultValue) {
+        SharedPreferences rp = mRemotePrefs;
+        if (rp != null && remoteKey != null) {
+            try {
+                if (rp.contains(remoteKey)) {
+                    return rp.getBoolean(remoteKey, defaultValue);
+                }
+            } catch (Throwable ignored) { }
+        }
+        return isPropertyEnabled(propKey, defaultValue);
+    }
+
+    private String getStringSetting(String remoteKey, String propKey, String defaultValue) {
+        SharedPreferences rp = mRemotePrefs;
+        if (rp != null && remoteKey != null) {
+            try {
+                if (rp.contains(remoteKey)) {
+                    String val = rp.getString(remoteKey, defaultValue);
+                    return val != null ? val : defaultValue;
+                }
+            } catch (Throwable ignored) { }
+        }
+        return getPropertyString(propKey, defaultValue);
+    }
+
+    private float getFloatSetting(String remoteKey, String propKey, float defaultVal, float minVal, float maxVal) {
+        SharedPreferences rp = mRemotePrefs;
+        if (rp != null && remoteKey != null) {
+            try {
+                if (rp.contains(remoteKey)) {
+                    Object raw = rp.getAll().get(remoteKey);
+                    if (raw instanceof Number) {
+                        float v = ((Number) raw).floatValue();
+                        if (!Float.isNaN(v) && !Float.isInfinite(v)) {
+                            return Math.max(minVal, Math.min(maxVal, v));
+                        }
+                    } else if (raw instanceof String) {
+                        return BrightnessMath.parseFloatBounded((String) raw, defaultVal, minVal, maxVal);
+                    }
+                }
+            } catch (Throwable ignored) { }
+        }
+        return getPropertyFloat(propKey, defaultVal, minVal, maxVal);
     }
 
     private static boolean isPropertyEnabled(String propKey, boolean defaultValue) {
@@ -1020,7 +1133,8 @@ public class AutoBrightnessModule extends XposedModule {
                 continue;
             }
             if (cls.startsWith("LSPHooker_") || cls.startsWith("io.github.libxposed.")
-                    || cls.startsWith("org.lsposed.") || cls.startsWith("java.lang.reflect.")) {
+                    || cls.startsWith("org.lsposed.") || cls.startsWith("org.matrix.")
+                    || cls.startsWith("java.lang.reflect.")) {
                 continue;
             }
             if (added++ > 0) sb.append(" <- ");

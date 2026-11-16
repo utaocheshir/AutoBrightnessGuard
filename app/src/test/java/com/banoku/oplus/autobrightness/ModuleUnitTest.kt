@@ -17,7 +17,8 @@ class ModuleUnitTest {
 
     @Test
     fun versionAndTagCheck() {
-        assertEquals("1.4.5", AutoBrightnessModule.VERSION)
+        assertEquals("1.5.0", AutoBrightnessModule.VERSION)
+        assertEquals("autobrightness_config", AutoBrightnessModule.REMOTE_PREFS_GROUP)
         assertEquals("AutoBrightnessGuard", AutoBrightnessModule.TAG)
         assertEquals("persist.autobrightness.block_reset", AutoBrightnessModule.PROP_BLOCK_RESET)
         assertEquals("persist.autobrightness.block_ambient", AutoBrightnessModule.PROP_BLOCK_AMBIENT)
@@ -34,7 +35,7 @@ class ModuleUnitTest {
         assertEquals("persist.autobrightness.curve", AutoBrightnessModule.PROP_CURVE_CONFIG)
         assertEquals(8.5f, BrightnessMath.NIGHT_MIN_FLOOR_NITS, 0.001f)
         assertEquals(3500.0f, BrightnessMath.MAX_CURVE_NIT, 0.001f)
-        assertEquals(200.0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT, 0.001f)
+        assertEquals(150.0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT, 0.001f)
     }
 
     @Test
@@ -138,13 +139,12 @@ class ModuleUnitTest {
     @Test
     fun updateCheckerVersionComparison() {
         assertFalse(UpdateChecker.isVersionNewer("V1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("v1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.4.5", "1.4.5"))
+        assertFalse(UpdateChecker.isVersionNewer("v1.5.0", "1.5.0"))
+        assertTrue(UpdateChecker.isVersionNewer("1.5.0", "1.4.5"))
         assertTrue(UpdateChecker.isVersionNewer("1.4.5", "1.4.4"))
         assertTrue(UpdateChecker.isVersionNewer("1.4.4", "1.4.3"))
-        assertTrue(UpdateChecker.isVersionNewer("1.4.3", "1.4.2"))
         assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.4.5"))
+        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.5.0"))
     }
 
     @Test
@@ -158,6 +158,12 @@ class ModuleUnitTest {
         val stats = RootHelper.computeStats(sampleLogs)
         assertEquals(2, stats.totalBlocked)
         assertEquals("20:11:49", stats.lastBlockedTime)
+        assertTrue(stats.hasExactModuleStats)
+        assertEquals(4, stats.antiDriftCount)
+        assertEquals(3, stats.floorAndDarkEnvCount)
+        assertEquals(6, stats.customCurveCount)
+        assertEquals(13, stats.stabilityAndSensorsCount)
+        assertEquals(26, stats.totalGuardInterventions)
 
         val runtimeStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, AutoBrightnessModule.VERSION)
         assertTrue(runtimeStatus.moduleDetected)
@@ -178,6 +184,26 @@ class ModuleUnitTest {
     }
 
     @Test
+    fun guardStatsFallbackWhenBlockedLinesEvictedCheck() {
+        val raw = listOf(
+            "11-16 09:00:00.001 1000 1234 1234 I AutoBrightnessGuard: v1.5.0 (Vector/LSPosed Verified Engine) starting, sdk=37, remote=true, build=test",
+            "11-16 09:00:01.001 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=10/10,version=1.5.0,sdk=37,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK",
+            "11-16 14:25:00.100 1000 1234 1234 I AutoBrightnessGuard: GUARD_STATS:reset=3,ambient=2,drift=12,debounce=4,floor=5,darkenv=2,dimming=1,aux=8,hyst=7,curve=15,pwm=1,last_block_ms=1731740000000"
+        ).joinToString("\n")
+        val entries = RootHelper.parseLogs(raw).reversed()
+        val stats = RootHelper.computeStats(entries)
+        assertEquals(5, stats.totalBlocked)
+        assertEquals(3, stats.resetBlockedCount)
+        assertEquals(2, stats.ambientBlockedCount)
+        assertTrue(stats.lastBlockedTime.isNotBlank())
+        assertEquals(12, stats.antiDriftCount)
+        assertEquals(7, stats.floorAndDarkEnvCount)
+        assertEquals(15, stats.customCurveCount)
+        assertEquals(21, stats.stabilityAndSensorsCount)
+        assertEquals(55, stats.totalGuardInterventions)
+    }
+
+    @Test
     fun vectorAndLogcatBracketParsingCheck() {
         // Logcat line with brackets inside message (Hook [1/10]) must NOT be chopped at first ']'
         val logcatHook = "11-15 08:12:01.123  1000  1234  1234 I AutoBrightnessGuard: Hook [1/10] controller resetAutoBrightness installed"
@@ -192,9 +218,9 @@ class ModuleUnitTest {
             RootHelper.cleanLogMessage(logcatHyst)
         )
 
-        val vectorBoot = "[ 2026-11-15T08:12:00.001 1000:1234:1234 I/Vector(AutoBrightnessGuard) ] v1.4.5 (ColorOS 17 Verified Engine) starting, sdk=36, build=test"
+        val vectorBoot = "[ 2026-11-15T08:12:00.001 1000:1234:1234 I/Vector(AutoBrightnessGuard) ] v1.5.0 (Vector/LSPosed Verified Engine) starting, sdk=37, remote=true, build=test"
         assertEquals(
-            "v1.4.5 (ColorOS 17 Verified Engine) starting, sdk=36, build=test",
+            "v1.5.0 (Vector/LSPosed Verified Engine) starting, sdk=37, remote=true, build=test",
             RootHelper.cleanLogMessage(vectorBoot)
         )
 
@@ -202,14 +228,14 @@ class ModuleUnitTest {
             vectorBoot,
             logcatHook,
             logcatHook, // duplicate line from boot+tail grep should deduplicate
-            "11-15 08:12:02.000 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=10/10,version=1.4.5,sdk=36,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK"
+            "11-15 08:12:02.000 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=10/10,version=1.5.0,sdk=37,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK"
         ).joinToString("\n")
 
         val entries = RootHelper.parseLogs(rawCombined).reversed()
         assertEquals(3, entries.size)
-        val status = RootHelper.parseModuleRuntimeStatus(entries, "1.4.5")
+        val status = RootHelper.parseModuleRuntimeStatus(entries, "1.5.0")
         assertTrue(status.moduleDetected)
-        assertEquals("1.4.5", status.loadedVersion)
+        assertEquals("1.5.0", status.loadedVersion)
         assertFalse(status.isVersionMismatch)
         assertEquals(10, status.installedCount)
     }
