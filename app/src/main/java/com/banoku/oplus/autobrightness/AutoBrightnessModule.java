@@ -61,6 +61,8 @@ public class AutoBrightnessModule extends XposedModule {
     public static final String PROP_DISABLE_AUX_SENSOR = "persist.autobrightness.disable_aux_sensor";
     public static final String PROP_DISABLE_PWM_SENSOR = "persist.autobrightness.disable_pwm_sensor";
     public static final String PROP_CURVE_CONFIG = "persist.autobrightness.curve";
+    public static final String PROP_SYNC_TS = "persist.autobrightness.sync_ts";
+    public static final String PREF_SYNC_TS = "pref_sync_ts";
 
     // Verified Target Classes in oplus-services.jar
     private static final String TARGET_CLASS =
@@ -160,8 +162,24 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile Field mPairSecondField;
     private volatile Method mOplusPairCreate;
 
+    public AutoBrightnessModule() {
+        super();
+    }
+
+    @Override
+    public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
+        super.onModuleLoaded(param);
+        try {
+            String proc = param.getProcessName();
+            if ("system_server".equals(proc) || "android".equals(proc)) {
+                note(Log.INFO, "onModuleLoaded in " + proc + " (v" + VERSION + ")");
+            }
+        } catch (Throwable ignored) { }
+    }
+
     @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
+        super.onSystemServerStarting(param);
         initRemotePreferences();
         note(Log.INFO, "v" + VERSION + " (Vector/LSPosed Verified Engine) starting, sdk=" + Build.VERSION.SDK_INT
                 + ", remote=" + (mRemotePrefs != null) + ", build=" + Build.FINGERPRINT);
@@ -225,8 +243,12 @@ public class AutoBrightnessModule extends XposedModule {
             if ((props & XposedInterface.PROP_CAP_REMOTE) != 0) {
                 SharedPreferences rp = getRemotePreferences(REMOTE_PREFS_GROUP);
                 if (rp != null) {
-                    rp.registerOnSharedPreferenceChangeListener(mRemotePrefsListener);
                     mRemotePrefs = rp;
+                    try {
+                        rp.registerOnSharedPreferenceChangeListener(mRemotePrefsListener);
+                    } catch (Throwable ignored) {
+                        // Read-only RemotePreferences on some frameworks reject listeners
+                    }
                 }
             }
         } catch (Throwable ignored) {
@@ -285,7 +307,7 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 Method resetNoArgs = controller.getDeclaredMethod(RESET_METHOD);
                 deoptimize(resetNoArgs);
-                hook(resetNoArgs).setId("guard-reset-0arg").intercept(new ResetGuard());
+                hook(resetNoArgs).intercept(new ResetGuard());
                 hooked++;
             } catch (Throwable t) {
                 note(Log.INFO, "resetAutoBrightness() skipped: " + t.getMessage());
@@ -294,7 +316,7 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 Method resetWithType = controller.getDeclaredMethod(RESET_METHOD, int.class);
                 deoptimize(resetWithType);
-                hook(resetWithType).setId("guard-reset-1arg").intercept(new ResetGuard());
+                hook(resetWithType).intercept(new ResetGuard());
                 hooked++;
             } catch (Throwable t) {
                 note(Log.INFO, "resetAutoBrightness(int) skipped: " + t.getMessage());
@@ -314,7 +336,7 @@ public class AutoBrightnessModule extends XposedModule {
             Class<?> ambientAdapter = Class.forName(AMBIENT_CLASS, false, cl);
             Method resetAmbient = ambientAdapter.getDeclaredMethod(RESET_AMBIENT_METHOD, String.class);
             deoptimize(resetAmbient);
-            hook(resetAmbient).setId("guard-ambient-reset").intercept(new AmbientAdapterGuard());
+            hook(resetAmbient).intercept(new AmbientAdapterGuard());
             note(Log.INFO, "Hook [2/10] ambient resetAmbientAdapter(String) installed");
             return true;
         } catch (Throwable t) {
@@ -332,7 +354,7 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 Method stableForce = ambientAdapter.getDeclaredMethod("handleStableForceChange", luxResultCls, float.class);
                 deoptimize(stableForce);
-                hook(stableForce).setId("guard-stable-force-change").intercept(new AntiDriftHook("StableForceChange"));
+                hook(stableForce).intercept(new AntiDriftHook("StableForceChange"));
                 installed++;
             } catch (Throwable t) {
                 note(Log.INFO, "handleStableForceChange skipped: " + t.getMessage());
@@ -341,7 +363,7 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 Method smallAnimating = ambientAdapter.getDeclaredMethod("handleSmallChangeAnimating", luxResultCls, float.class);
                 deoptimize(smallAnimating);
-                hook(smallAnimating).setId("guard-small-change-animating").intercept(new AntiDriftHook("RecoverChange"));
+                hook(smallAnimating).intercept(new AntiDriftHook("RecoverChange"));
                 installed++;
             } catch (Throwable t) {
                 note(Log.INFO, "handleSmallChangeAnimating skipped: " + t.getMessage());
@@ -363,14 +385,14 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 Method m0 = stabilityCls.getDeclaredMethod("getAccelerateScale");
                 deoptimize(m0);
-                hook(m0).setId("guard-accel-scale-0").intercept(new DebounceScaleHook());
+                hook(m0).intercept(new DebounceScaleHook());
                 installed++;
             } catch (Throwable ignored) { }
 
             try {
                 Method m1 = stabilityCls.getDeclaredMethod("getAccelerateScale", float.class);
                 deoptimize(m1);
-                hook(m1).setId("guard-accel-scale-1").intercept(new DebounceScaleHook());
+                hook(m1).intercept(new DebounceScaleHook());
                 installed++;
             } catch (Throwable ignored) { }
 
@@ -378,7 +400,7 @@ public class AutoBrightnessModule extends XposedModule {
                 Class<?> sceneBaseCls = Class.forName(SCENE_BASE_CLASS, false, cl);
                 Method m2 = stabilityCls.getDeclaredMethod("getAccelerateScale", float.class, sceneBaseCls);
                 deoptimize(m2);
-                hook(m2).setId("guard-accel-scale-2").intercept(new DebounceScaleHook());
+                hook(m2).intercept(new DebounceScaleHook());
                 installed++;
             } catch (Throwable ignored) { }
 
@@ -396,7 +418,7 @@ public class AutoBrightnessModule extends XposedModule {
             Class<?> builderCls = Class.forName(STATE_BUILDER_CLASS, false, cl);
             Method shouldSkip = darkEnvCls.getDeclaredMethod("shouldSkipProcessing", builderCls);
             deoptimize(shouldSkip);
-            hook(shouldSkip).setId("guard-dark-env-skip").intercept(new DarkEnvSkipHook());
+            hook(shouldSkip).intercept(new DarkEnvSkipHook());
             note(Log.INFO, "Hook [5a/10] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed");
             return true;
         } catch (Throwable t) {
@@ -411,7 +433,7 @@ public class AutoBrightnessModule extends XposedModule {
             Class<?> builderCls = Class.forName(STATE_BUILDER_CLASS, false, cl);
             Method convertNit = ppmCls.getDeclaredMethod("convertNitToBrightness", builderCls);
             deoptimize(convertNit);
-            hook(convertNit).setId("guard-nit-floor").intercept(new NightNitFloorHook());
+            hook(convertNit).intercept(new NightNitFloorHook());
             note(Log.INFO, "Hook [5b/10] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (" + NIGHT_MIN_FLOOR_NITS + " nits) installed");
             return true;
         } catch (Throwable t) {
@@ -425,7 +447,7 @@ public class AutoBrightnessModule extends XposedModule {
             Class<?> reduceCls = Class.forName(REDUCE_BRIGHTNESS_FEATURE_CLASS, false, cl);
             Method isDisabled = reduceCls.getDeclaredMethod("isReduceDisabled");
             deoptimize(isDisabled);
-            hook(isDisabled).setId("guard-smart-dimming-bypass").intercept(new SmartDimmingBypassHook());
+            hook(isDisabled).intercept(new SmartDimmingBypassHook());
             note(Log.INFO, "Hook [6/10] OplusFeatureReduceBrightness.isReduceDisabled installed");
             return true;
         } catch (Throwable t) {
@@ -439,7 +461,7 @@ public class AutoBrightnessModule extends XposedModule {
             Class<?> luxEventResultCls = Class.forName(LUX_EVENT_RESULT_CLASS, false, cl);
             Method calcAux = luxEventResultCls.getDeclaredMethod("calculateAuxLux", float.class, float.class);
             deoptimize(calcAux);
-            hook(calcAux).setId("guard-dual-aux-balance").intercept(new DualSensorAuxHook());
+            hook(calcAux).intercept(new DualSensorAuxHook());
             note(Log.INFO, "Hook [7/10] LuxEvent$LuxEventResult.calculateAuxLux balancer installed");
             return true;
         } catch (Throwable t) {
@@ -456,7 +478,7 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 Method mainLimit = stabilityCls.getDeclaredMethod("getLargeChangeLimit", float.class);
                 deoptimize(mainLimit);
-                hook(mainLimit).setId("guard-hysteresis-main").intercept(new HysteresisLimitHook("large"));
+                hook(mainLimit).intercept(new HysteresisLimitHook("large"));
                 installed++;
             } catch (Throwable t) {
                 note(Log.INFO, "getLargeChangeLimit(float) skipped: " + t.getMessage());
@@ -465,7 +487,7 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 Method auxLimit = stabilityCls.getDeclaredMethod("getLargeChangeLimitForSpecialLight", float.class);
                 deoptimize(auxLimit);
-                hook(auxLimit).setId("guard-hysteresis-aux").intercept(new HysteresisLimitHook("large"));
+                hook(auxLimit).intercept(new HysteresisLimitHook("large"));
                 installed++;
             } catch (Throwable ignored) { }
 
@@ -482,7 +504,7 @@ public class AutoBrightnessModule extends XposedModule {
             Class<?> modelCls = Class.forName(BRIGHTNESS_MODEL_CLASS, false, cl);
             Method getVal = modelCls.getDeclaredMethod("getValueByCurve", String.class, float.class);
             deoptimize(getVal);
-            hook(getVal).setId("guard-live-custom-curve").intercept(new CustomCurveHook());
+            hook(getVal).intercept(new CustomCurveHook());
             note(Log.INFO, "Hook [9/10] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed");
             return true;
         } catch (Throwable t) {
@@ -499,7 +521,7 @@ public class AutoBrightnessModule extends XposedModule {
             Field eventsField = queueCls.getDeclaredField("mSensorsEvents");
             eventsField.setAccessible(true);
             mQueueSensorsEventsField = eventsField;
-            hook(dispatch).setId("guard-pwm-sensor").intercept(new PwmSensorGuardHook());
+            hook(dispatch).intercept(new PwmSensorGuardHook());
             note(Log.INFO, "Hook [10/10] SystemSensorManager$SensorEventQueue high_pwm_rgb guard installed");
             return true;
         } catch (Throwable t) {
@@ -1030,8 +1052,36 @@ public class AutoBrightnessModule extends XposedModule {
                 + ",last_block_ms=" + mLastBlockedEpochMs);
     }
 
+    private boolean shouldPreferRemotePrefs() {
+        SharedPreferences rp = mRemotePrefs;
+        if (rp == null) return false;
+        try {
+            long rpTs = rp.getLong(PREF_SYNC_TS, 0L);
+            String spTsRaw = getPropertyString(PROP_SYNC_TS, "");
+            long spTs = 0L;
+            if (!spTsRaw.isEmpty()) {
+                try {
+                    spTs = Long.parseLong(spTsRaw.trim());
+                } catch (NumberFormatException ignored) { }
+            }
+            return rpTs >= spTs;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private boolean getBoolSetting(String remoteKey, String propKey, boolean defaultValue) {
         SharedPreferences rp = mRemotePrefs;
+        if (shouldPreferRemotePrefs() && rp != null && remoteKey != null) {
+            try {
+                if (rp.contains(remoteKey)) {
+                    return rp.getBoolean(remoteKey, defaultValue);
+                }
+            } catch (Throwable ignored) { }
+        }
+        if (propKey != null && !getPropertyString(propKey, "").isEmpty()) {
+            return isPropertyEnabled(propKey, defaultValue);
+        }
         if (rp != null && remoteKey != null) {
             try {
                 if (rp.contains(remoteKey)) {
@@ -1039,11 +1089,23 @@ public class AutoBrightnessModule extends XposedModule {
                 }
             } catch (Throwable ignored) { }
         }
-        return isPropertyEnabled(propKey, defaultValue);
+        return defaultValue;
     }
 
     private String getStringSetting(String remoteKey, String propKey, String defaultValue) {
         SharedPreferences rp = mRemotePrefs;
+        if (shouldPreferRemotePrefs() && rp != null && remoteKey != null) {
+            try {
+                if (rp.contains(remoteKey)) {
+                    String val = rp.getString(remoteKey, defaultValue);
+                    return val != null ? val : defaultValue;
+                }
+            } catch (Throwable ignored) { }
+        }
+        String spVal = getPropertyString(propKey, "");
+        if (!spVal.isEmpty()) {
+            return spVal;
+        }
         if (rp != null && remoteKey != null) {
             try {
                 if (rp.contains(remoteKey)) {
@@ -1052,11 +1114,30 @@ public class AutoBrightnessModule extends XposedModule {
                 }
             } catch (Throwable ignored) { }
         }
-        return getPropertyString(propKey, defaultValue);
+        return defaultValue;
     }
 
     private float getFloatSetting(String remoteKey, String propKey, float defaultVal, float minVal, float maxVal) {
         SharedPreferences rp = mRemotePrefs;
+        if (shouldPreferRemotePrefs() && rp != null && remoteKey != null) {
+            try {
+                if (rp.contains(remoteKey)) {
+                    Object raw = rp.getAll().get(remoteKey);
+                    if (raw instanceof Number) {
+                        float v = ((Number) raw).floatValue();
+                        if (!Float.isNaN(v) && !Float.isInfinite(v)) {
+                            return Math.max(minVal, Math.min(maxVal, v));
+                        }
+                    } else if (raw instanceof String) {
+                        return BrightnessMath.parseFloatBounded((String) raw, defaultVal, minVal, maxVal);
+                    }
+                }
+            } catch (Throwable ignored) { }
+        }
+        String spVal = getPropertyString(propKey, "");
+        if (!spVal.isEmpty()) {
+            return BrightnessMath.parseFloatBounded(spVal, defaultVal, minVal, maxVal);
+        }
         if (rp != null && remoteKey != null) {
             try {
                 if (rp.contains(remoteKey)) {
@@ -1072,7 +1153,7 @@ public class AutoBrightnessModule extends XposedModule {
                 }
             } catch (Throwable ignored) { }
         }
-        return getPropertyFloat(propKey, defaultVal, minVal, maxVal);
+        return defaultVal;
     }
 
     private static boolean isPropertyEnabled(String propKey, boolean defaultValue) {

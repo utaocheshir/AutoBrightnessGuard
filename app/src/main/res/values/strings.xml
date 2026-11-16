@@ -24,10 +24,14 @@
     <string name="stats_card_title">Module Status &amp; Protection</string>
     <string name="status_active_full">Active (%1$d/%2$d hooks • v%3$s)</string>
     <string name="status_active_partial">Partially active (%1$d/%2$d hooks • v%3$s)</string>
-    <string name="status_ipc_connected_no_logs">Connected via %1$s (Zero-Root). Tap ↻ with root to inspect hook logs</string>
-    <string name="status_not_in_system_server">Module not detected in system_server</string>
+    <string name="status_ipc_connected_no_logs">Connected via %1$s (Zero-Root). Grant root and tap ↻ to inspect hook logs</string>
+    <string name="status_vector_not_in_system_server">%1$s IPC connected, but 0/%2$d hooks in system_server</string>
+    <string name="status_checking_logs">Checking system_server hook logs…</string>
+    <string name="status_vector_ksun_hint">Hooks did not load into system_server. Perform a full Reboot after installing/updating the APK. On KSUN (LKM) + SUSFS, verify in Vector/LSPosed Manager that system_server is actually injected (late Zygisk init can miss early system_server launch).</string>
+    <string name="status_not_in_system_server">Module not detected in system_server (0 hooks)</string>
     <string name="status_need_root_verify">Root required to verify system_server hooks</string>
-    <string name="status_version_mismatch">Loaded v%1$s — Soft Reboot needed for v%2$s</string>
+    <string name="status_version_mismatch">Loaded v%1$s — Full/Soft Reboot needed for v%2$s</string>
+    <string name="logs_diag_header">Framework diagnostics (0 module entries):</string>
     <string name="refresh_hooks_desc">Refresh hook status</string>
     <string name="scope_label">Scope &amp; Transport</string>
     <string name="stats_blocked_label">Blocked Resets</string>

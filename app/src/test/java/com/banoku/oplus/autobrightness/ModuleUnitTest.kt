@@ -33,6 +33,8 @@ class ModuleUnitTest {
         assertEquals("persist.autobrightness.disable_aux_sensor", AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR)
         assertEquals("persist.autobrightness.disable_pwm_sensor", AutoBrightnessModule.PROP_DISABLE_PWM_SENSOR)
         assertEquals("persist.autobrightness.curve", AutoBrightnessModule.PROP_CURVE_CONFIG)
+        assertEquals("persist.autobrightness.sync_ts", AutoBrightnessModule.PROP_SYNC_TS)
+        assertEquals("pref_sync_ts", AutoBrightnessModule.PREF_SYNC_TS)
         assertEquals(8.5f, BrightnessMath.NIGHT_MIN_FLOOR_NITS, 0.001f)
         assertEquals(3500.0f, BrightnessMath.MAX_CURVE_NIT, 0.001f)
         assertEquals(150.0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT, 0.001f)
@@ -238,6 +240,12 @@ class ModuleUnitTest {
         assertEquals("1.5.0", status.loadedVersion)
         assertFalse(status.isVersionMismatch)
         assertEquals(10, status.installedCount)
+
+        val loadOnlyRaw = "[ 2026-11-16T10:00:00.001 1000:1234:1234 I/Vector(AutoBrightnessGuard) ] onModuleLoaded in system_server (v1.5.0)"
+        val loadOnlyStatus = RootHelper.parseModuleRuntimeStatus(RootHelper.parseLogs(loadOnlyRaw), "1.5.0")
+        assertTrue(loadOnlyStatus.moduleDetected)
+        assertEquals("1.5.0", loadOnlyStatus.loadedVersion)
+        assertEquals(0, loadOnlyStatus.installedCount)
     }
 
     @Test

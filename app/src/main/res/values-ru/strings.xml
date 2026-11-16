@@ -25,9 +25,13 @@
     <string name="status_active_full">Активен (%1$d/%2$d хуков • v%3$s)</string>
     <string name="status_active_partial">Частично активен (%1$d/%2$d хуков • v%3$s)</string>
     <string name="status_ipc_connected_no_logs">Связь через %1$s (Zero-Root). Для проверки логов хуков дайте root и нажмите ↻</string>
-    <string name="status_not_in_system_server">Модуль не обнаружен в system_server</string>
+    <string name="status_vector_not_in_system_server">%1$s IPC подключён, но в system_server 0/%2$d хуков</string>
+    <string name="status_checking_logs">Проверка логов хуков в system_server…</string>
+    <string name="status_vector_ksun_hint">Хуки не загрузились в system_server. Выполните полную перезагрузку (Reboot) после установки APK. На KSUN (LKM) + SUSFS проверьте в Vector/LSPosed Manager статус инъекции в system_server (поздний старт Zygisk LKM может пропустить ранний system_server).</string>
+    <string name="status_not_in_system_server">Модуль не обнаружен в system_server (0 хуков)</string>
     <string name="status_need_root_verify">Нужен Root для чтения логов хуков</string>
-    <string name="status_version_mismatch">В памяти v%1$s — нужен Soft Reboot для v%2$s</string>
+    <string name="status_version_mismatch">В памяти v%1$s — нужна перезагрузка для v%2$s</string>
+    <string name="logs_diag_header">Диагностика фреймворка (0 записей модуля):</string>
     <string name="refresh_hooks_desc">Обновить статус хуков</string>
     <string name="scope_label">Область и транспорт</string>
     <string name="stats_blocked_label">Блокировки сброса</string>

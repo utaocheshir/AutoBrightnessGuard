@@ -87,6 +87,7 @@ fun MainAppScreen() {
     var displayCalibration by remember { mutableStateOf<DisplayCalibration?>(null) }
     var isRefreshingStatus by remember { mutableStateOf(false) }
     var isRootAvailable by remember { mutableStateOf(RootHelper.isRootAvailable()) }
+    var frameworkDiagHint by remember { mutableStateOf("") }
     var showSoftRebootDialog by remember { mutableStateOf(false) }
     var isRebooting by remember { mutableStateOf(false) }
 
@@ -103,6 +104,7 @@ fun MainAppScreen() {
     fun applyLogsToRuntimeState(logs: List<LogEntry>): Boolean {
         var foundStock = false
         if (logs.isNotEmpty()) {
+            frameworkDiagHint = ""
             stats = RootHelper.computeStats(logs)
             moduleStatus = RootHelper.parseModuleRuntimeStatus(logs, BuildConfig.VERSION_NAME)
             val parsedStock = RootHelper.extractLatestStockCurve(logs)
@@ -110,6 +112,9 @@ fun MainAppScreen() {
                 cacheStockCurve(parsedStock)
                 foundStock = true
             }
+        } else {
+            stats = GuardStats(0, "", "")
+            moduleStatus = RootHelper.parseModuleRuntimeStatus(emptyList(), BuildConfig.VERSION_NAME)
         }
         return foundStock
     }
@@ -137,6 +142,9 @@ fun MainAppScreen() {
             XposedBridgeClient.syncAllFromLocalPrefs(prefs, hasRoot)
             val logs = RootHelper.readModuleLogs()
             val foundStock = applyLogsToRuntimeState(logs)
+            if (logs.isEmpty() && hasRoot) {
+                frameworkDiagHint = RootHelper.readFrameworkDiagnosticHint()
+            }
             refreshCalibrationAndStock(foundStock)
             isRefreshingStatus = false
         }
@@ -152,12 +160,17 @@ fun MainAppScreen() {
     // Startup checks: Root, dual-channel sync, logs, display calibration, and GitHub release check
     LaunchedEffect(Unit) {
         scope.launch {
+            isRefreshingStatus = true
             val hasRoot = RootHelper.checkRootAccess() || RootHelper.isRootAvailable()
             isRootAvailable = hasRoot
             XposedBridgeClient.syncAllFromLocalPrefs(prefs, hasRoot)
             val logs = RootHelper.readModuleLogs()
             val foundStock = applyLogsToRuntimeState(logs)
+            if (logs.isEmpty() && hasRoot) {
+                frameworkDiagHint = RootHelper.readFrameworkDiagnosticHint()
+            }
             refreshCalibrationAndStock(foundStock)
+            isRefreshingStatus = false
         }
         scope.launch {
             isCheckingUpdate = true
@@ -259,6 +272,7 @@ fun MainAppScreen() {
                 isRefreshingStatus = isRefreshingStatus,
                 stockCurveNits = stockCurveNits,
                 displayCalibration = displayCalibration,
+                frameworkDiagHint = frameworkDiagHint,
                 onRefreshRuntime = { refreshRuntimeState() },
                 onRefreshCalibration = {
                     scope.launch {
@@ -278,6 +292,7 @@ fun MainAppScreen() {
             )
             2 -> LogsTabContent(
                 modifier = Modifier.padding(innerPadding),
+                frameworkDiagHint = frameworkDiagHint,
                 onStatsUpdated = { newStats -> stats = newStats },
                 onLogsFetched = { fetched -> applyLogsToRuntimeState(fetched) }
             )

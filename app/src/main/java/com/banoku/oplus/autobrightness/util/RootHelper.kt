@@ -35,14 +35,12 @@ object RootHelper {
     )
 
     private const val MODULE_LOG_CANDIDATES =
-        "/data/adb/vector/log/modules*.log /data/adb/vector/log/verbose_*.log " +
-            "/data/adb/lsp/log/modules*.log /data/adb/lsp/log/verbose_*.log " +
-            "/data/adb/lspd/log/modules*.log " +
-            "/data/adb/vector/log.old/modules*.log /data/adb/lspd/log.old/modules*.log " +
-            "/data/adb/*/log/modules*.log"
+        "/data/adb/vector/log/*.log /data/adb/lsp/log/*.log /data/adb/lspd/log/*.log " +
+            "/data/adb/vector/log.old/*.log /data/adb/lsp/log.old/*.log /data/adb/lspd/log.old/*.log " +
+            "/data/adb/*/log/*.log"
 
     private const val MODULE_BOOT_PATTERN =
-        "AutoBrightnessGuard.*(starting, sdk=|Hook \\[|HOOK_SUMMARY:|STOCK_CURVE:|BLOCKED |GUARD_STATS:)"
+        "AutoBrightnessGuard.*(onModuleLoaded|starting, sdk=|Hook \\[|HOOK_SUMMARY:|STOCK_CURVE:|BLOCKED |GUARD_STATS:)"
 
     fun isRootAvailable(): Boolean {
         for (path in SU_CANDIDATE_PATHS) {
@@ -196,14 +194,14 @@ object RootHelper {
     }
 
     suspend fun readModuleLogs(): List<LogEntry> = withContext(Dispatchers.IO) {
-        // 1. Check the most recent Vector / LSPosed / ReLSPosed module log file safely.
+        // 1. Check the 3 most recent Vector / LSPosed / ReLSPosed log files safely (e.g. modules_*.log + verbose_*.log).
         // Pinned grep preserves boot summary, hook status, STOCK_CURVE, BLOCKED resets & GUARD_STATS across long uptime.
         val latestCmd =
-            "f=\$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 1); " +
-                "if [ -n \"\$f\" ] && [ -r \"\$f\" ]; then " +
+            "for f in \$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 3); do " +
+                "if [ -r \"\$f\" ]; then " +
                 "grep -iE '$MODULE_BOOT_PATTERN' \"\$f\" 2>/dev/null | tail -n 50; " +
                 "grep -i AutoBrightnessGuard \"\$f\" 2>/dev/null | tail -n 150; " +
-                "fi"
+                "fi; done"
         var result = executeSuCommand(latestCmd)
         if (result.output.isNotBlank()) {
             return@withContext parseLogs(result.output).reversed()
@@ -234,6 +232,24 @@ object RootHelper {
         }
 
         emptyList()
+    }
+
+    suspend fun readFrameworkDiagnosticHint(): String = withContext(Dispatchers.IO) {
+        val diagCmd =
+            "logs=\$(ls -1t /data/adb/vector/log/*.log /data/adb/lsp/log/*.log /data/adb/lspd/log/*.log 2>/dev/null | head -n 4); " +
+                "if [ -n \"\$logs\" ]; then " +
+                "echo \"Logs: \$(echo \"\$logs\" | tr '\\n' ' ')\"; " +
+                "grep -ihE 'autobrightness|AutoBrightnessGuard|BRIDGE_TRANSACTION|system_server.*(fail|error|skip|deny|not)|not injected' " +
+                "/data/adb/vector/log/*.log /data/adb/lsp/log/*.log /data/adb/lspd/log/*.log 2>/dev/null | tail -n 8; " +
+                "else echo 'Logs: none found in /data/adb/{vector,lsp,lspd}/log'; fi; " +
+                "ps -A 2>/dev/null | grep -E 'vectord|lspd' | head -n 2"
+        val res = executeSuCommand(diagCmd)
+        if (res.output.isBlank()) return@withContext ""
+        res.output.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .take(10)
+            .joinToString("\n")
     }
 
     suspend fun readLatestStockCurveFromLogs(): List<Float>? = withContext(Dispatchers.IO) {
@@ -927,6 +943,8 @@ object RootHelper {
         val chrono = logs.asReversed()
         val startIdx = chrono.indexOfLast {
             it.message.contains("starting, sdk=", ignoreCase = true)
+        }.takeIf { it >= 0 } ?: chrono.indexOfLast {
+            it.message.contains("onModuleLoaded", ignoreCase = true)
         }
         val session = if (startIdx >= 0) chrono.subList(startIdx, chrono.size) else chrono
 

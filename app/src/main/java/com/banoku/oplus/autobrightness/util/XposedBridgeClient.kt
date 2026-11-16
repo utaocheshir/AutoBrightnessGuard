@@ -141,10 +141,15 @@ object XposedBridgeClient {
         propKey: String,
         value: Boolean
     ) {
+        val ts = System.currentTimeMillis()
         localPrefs.edit().putBoolean(prefKey, value).apply()
-        getRemotePreferences()?.edit()?.putBoolean(prefKey, value)?.apply()
+        getRemotePreferences()?.edit()
+            ?.putBoolean(prefKey, value)
+            ?.putLong(AutoBrightnessModule.PREF_SYNC_TS, ts)
+            ?.apply()
         withContext(Dispatchers.IO) {
             RootHelper.setSystemProperty(propKey, value)
+            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
         }
     }
 
@@ -154,10 +159,15 @@ object XposedBridgeClient {
         propKey: String,
         value: String
     ) {
+        val ts = System.currentTimeMillis()
         localPrefs.edit().putString(prefKey, value).apply()
-        getRemotePreferences()?.edit()?.putString(prefKey, value)?.apply()
+        getRemotePreferences()?.edit()
+            ?.putString(prefKey, value)
+            ?.putLong(AutoBrightnessModule.PREF_SYNC_TS, ts)
+            ?.apply()
         withContext(Dispatchers.IO) {
             RootHelper.setSystemPropertyString(propKey, value)
+            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
         }
     }
 
@@ -165,15 +175,20 @@ object XposedBridgeClient {
         localPrefs: SharedPreferences,
         scale: Float
     ) {
+        val ts = System.currentTimeMillis()
         val clamped = scale.coerceIn(
             BrightnessMath.MIN_HYSTERESIS_SCALE,
             BrightnessMath.MAX_HYSTERESIS_SCALE
         )
         localPrefs.edit().putFloat("pref_hysteresis_scale", clamped).apply()
-        getRemotePreferences()?.edit()?.putFloat("pref_hysteresis_scale", clamped)?.apply()
+        getRemotePreferences()?.edit()
+            ?.putFloat("pref_hysteresis_scale", clamped)
+            ?.putLong(AutoBrightnessModule.PREF_SYNC_TS, ts)
+            ?.apply()
         val propVal = String.format(Locale.US, "%.1f", clamped)
         withContext(Dispatchers.IO) {
             RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_HYSTERESIS, propVal)
+            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
         }
     }
 
@@ -182,6 +197,7 @@ object XposedBridgeClient {
         modeKey: String,
         customMinNit: Float
     ) {
+        val ts = System.currentTimeMillis()
         val clampedCustom = customMinNit.coerceIn(1f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT)
         val isAuto = modeKey == "auto"
         val effectiveCustom = if (modeKey == "custom") clampedCustom else 0f
@@ -194,6 +210,7 @@ object XposedBridgeClient {
         getRemotePreferences()?.edit()
             ?.putBoolean("pref_min_floor", isAuto)
             ?.putFloat("pref_custom_min_nit", effectiveCustom)
+            ?.putLong(AutoBrightnessModule.PREF_SYNC_TS, ts)
             ?.apply()
 
         val customPropStr = if (effectiveCustom >= 0.5f) {
@@ -204,6 +221,7 @@ object XposedBridgeClient {
         withContext(Dispatchers.IO) {
             RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, isAuto)
             RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, customPropStr)
+            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
         }
     }
 
@@ -211,6 +229,7 @@ object XposedBridgeClient {
         localPrefs: SharedPreferences,
         nit: Float
     ) {
+        val ts = System.currentTimeMillis()
         val clamped = nit.coerceIn(1f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT)
         localPrefs.edit()
             .putString("pref_floor_mode", "custom")
@@ -221,12 +240,14 @@ object XposedBridgeClient {
         getRemotePreferences()?.edit()
             ?.putBoolean("pref_min_floor", false)
             ?.putFloat("pref_custom_min_nit", clamped)
+            ?.putLong(AutoBrightnessModule.PREF_SYNC_TS, ts)
             ?.apply()
 
         val propVal = String.format(Locale.US, "%.1f", clamped)
         withContext(Dispatchers.IO) {
             RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, false)
             RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, propVal)
+            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
         }
     }
 
@@ -249,7 +270,11 @@ object XposedBridgeClient {
         }
     }
 
-    private fun writeAllToRemote(localPrefs: SharedPreferences, remotePrefs: SharedPreferences?) {
+    private fun writeAllToRemote(
+        localPrefs: SharedPreferences,
+        remotePrefs: SharedPreferences?,
+        syncTs: Long = System.currentTimeMillis()
+    ) {
         val rp = remotePrefs ?: return
         val (isAutoFloor, effectiveCustomNit) = resolveEffectiveFloor(localPrefs)
         val hysteresis = localPrefs.getFloat("pref_hysteresis_scale", BrightnessMath.DEFAULT_HYSTERESIS_SCALE)
@@ -273,6 +298,7 @@ object XposedBridgeClient {
                 .putBoolean("pref_disable_aux_sensor", localPrefs.getBoolean("pref_disable_aux_sensor", false))
                 .putBoolean("pref_disable_pwm_sensor", localPrefs.getBoolean("pref_disable_pwm_sensor", false))
                 .putString("pref_curve_config", curve)
+                .putLong(AutoBrightnessModule.PREF_SYNC_TS, syncTs)
                 .apply()
         } catch (_: Throwable) {
         }
@@ -281,11 +307,12 @@ object XposedBridgeClient {
     /**
      * Synchronizes ALL settings from local SharedPreferences into both:
      * 1) LibXposed RemotePreferences (zero-root Vector/LSPosed IPC), and
-     * 2) Android SystemProperties (fallback across root/boot).
+     * 2) Android SystemProperties (live override & fallback across root/boot).
      */
     suspend fun syncAllFromLocalPrefs(localPrefs: SharedPreferences, hasRoot: Boolean) {
+        val syncTs = System.currentTimeMillis()
         pendingLocalPrefs = localPrefs
-        writeAllToRemote(localPrefs, getRemotePreferences())
+        writeAllToRemote(localPrefs, getRemotePreferences(), syncTs)
 
         if (!hasRoot) return
 
@@ -323,6 +350,7 @@ object XposedBridgeClient {
                     RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, curve)
                 }
             }
+            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, syncTs.toString())
         }
     }
 }

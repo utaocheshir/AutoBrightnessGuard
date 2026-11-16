@@ -88,6 +88,7 @@ fun OverviewTabContent(
     isRefreshingStatus: Boolean,
     stockCurveNits: List<Float>?,
     displayCalibration: DisplayCalibration?,
+    frameworkDiagHint: String = "",
     onRefreshRuntime: () -> Unit,
     onRefreshCalibration: () -> Unit,
     onRequestSoftReboot: () -> Unit
@@ -127,7 +128,9 @@ fun OverviewTabContent(
                     moduleStatus.isVersionMismatch -> SunAmber
                     moduleStatus.moduleDetected && moduleStatus.installedCount == moduleStatus.totalCount -> AccentGreen
                     moduleStatus.moduleDetected -> SunAmber
-                    xposedState.isConnected && xposedState.hasSystemScope -> AccentGreen
+                    xposedState.isConnected && xposedState.hasSystemScope && !isRoot -> SunAmber
+                    xposedState.isConnected && xposedState.hasSystemScope && isRoot && isRefreshingStatus -> SunAmber
+                    xposedState.isConnected && xposedState.hasSystemScope && isRoot -> AccentRed
                     !isRoot && !xposedState.isConnected -> SunAmber
                     else -> AccentRed
                 }
@@ -136,7 +139,9 @@ fun OverviewTabContent(
                     moduleStatus.isVersionMismatch -> Icons.Default.Warning
                     moduleStatus.moduleDetected && moduleStatus.installedCount == moduleStatus.totalCount -> Icons.Default.CheckCircle
                     moduleStatus.moduleDetected -> Icons.Default.Warning
-                    xposedState.isConnected && xposedState.hasSystemScope -> Icons.Default.CheckCircle
+                    xposedState.isConnected && xposedState.hasSystemScope && !isRoot -> Icons.Default.Warning
+                    xposedState.isConnected && xposedState.hasSystemScope && isRoot && isRefreshingStatus -> Icons.Default.Warning
+                    xposedState.isConnected && xposedState.hasSystemScope && isRoot -> Icons.Default.Error
                     !isRoot && !xposedState.isConnected -> Icons.Default.Warning
                     else -> Icons.Default.Error
                 }
@@ -158,6 +163,14 @@ fun OverviewTabContent(
                         moduleStatus.installedCount,
                         moduleStatus.totalCount,
                         moduleStatus.loadedVersion.ifEmpty { BuildConfig.VERSION_NAME }
+                    )
+                    xposedState.isConnected && xposedState.hasSystemScope && isRoot && isRefreshingStatus -> stringResource(
+                        R.string.status_checking_logs
+                    )
+                    xposedState.isConnected && xposedState.hasSystemScope && isRoot -> stringResource(
+                        R.string.status_vector_not_in_system_server,
+                        xposedState.displayFrameworkLabel,
+                        moduleStatus.totalCount
                     )
                     xposedState.isConnected && xposedState.hasSystemScope -> stringResource(
                         R.string.status_ipc_connected_no_logs,
@@ -248,6 +261,33 @@ fun OverviewTabContent(
                                     color = SunAmber,
                                     fontWeight = FontWeight.Bold
                                 )
+                            }
+                        } else if (isRoot && !moduleStatus.moduleDetected && !isRefreshingStatus) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = AccentRed.copy(alpha = 0.14f),
+                                border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.status_vector_ksun_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFFCA5A5)
+                                    )
+                                    if (frameworkDiagHint.isNotBlank()) {
+                                        Text(
+                                            text = frameworkDiagHint,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 10.sp,
+                                            color = Color(0xFFCBD5E1)
+                                        )
+                                    }
+                                }
                             }
                         }
 

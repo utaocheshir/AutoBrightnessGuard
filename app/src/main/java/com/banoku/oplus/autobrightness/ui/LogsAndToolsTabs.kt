@@ -102,12 +102,14 @@ import java.io.File
 @Composable
 fun LogsTabContent(
     modifier: Modifier = Modifier,
+    frameworkDiagHint: String = "",
     onStatsUpdated: (GuardStats) -> Unit,
     onLogsFetched: (List<LogEntry>) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var logs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
+    var diagHint by remember(frameworkDiagHint) { mutableStateOf(frameworkDiagHint) }
     var isLoading by remember { mutableStateOf(false) }
     var filterText by remember { mutableStateOf("") }
 
@@ -125,12 +127,16 @@ fun LogsTabContent(
         val fetched = RootHelper.readModuleLogs()
         if (fetched.isNotEmpty()) {
             logs = fetched
+            diagHint = ""
             val stats = RootHelper.computeStats(fetched)
             onStatsUpdated(stats)
             onLogsFetched(fetched)
             statusMessage = String.format(statusLoadedFmt, fetched.size)
         } else {
             statusMessage = statusEmpty
+            if (diagHint.isBlank() && (RootHelper.isRootAvailable() || RootHelper.checkRootAccess())) {
+                diagHint = RootHelper.readFrameworkDiagnosticHint()
+            }
         }
     }
 
@@ -205,6 +211,7 @@ fun LogsTabContent(
                             val fetched = RootHelper.readModuleLogs()
                             if (fetched.isNotEmpty()) {
                                 logs = fetched
+                                diagHint = ""
                                 val stats = RootHelper.computeStats(fetched)
                                 onStatsUpdated(stats)
                                 onLogsFetched(fetched)
@@ -212,6 +219,9 @@ fun LogsTabContent(
                             } else {
                                 logs = emptyList()
                                 statusMessage = statusEmpty
+                                if (RootHelper.isRootAvailable() || RootHelper.checkRootAccess()) {
+                                    diagHint = RootHelper.readFrameworkDiagnosticHint()
+                                }
                             }
                             isLoading = false
                         }
@@ -287,12 +297,44 @@ fun LogsTabContent(
             ) {
                 if (filteredLogs.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = stringResource(R.string.logs_empty_box),
-                            color = Color(0xFF64748B),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(16.dp)
-                        )
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = stringResource(R.string.logs_empty_box),
+                                color = Color(0xFF94A3B8),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            if (filterText.isBlank() && diagHint.isNotBlank()) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFF111827),
+                                    border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.logs_diag_header),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SunAmber
+                                        )
+                                        Text(
+                                            text = diagHint,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            color = Color(0xFFCBD5E1)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 } else {
                     LazyColumn(
@@ -778,7 +820,7 @@ fun ToolsTabContent(
                                 CommandItem(
                                     title = stringResource(R.string.cmd_1_title),
                                     desc = stringResource(R.string.cmd_1_desc),
-                                    command = "su -c 'f=\$(ls -t /data/adb/vector/log/modules*.log /data/adb/lsp/log/modules*.log /data/adb/lspd/log/modules*.log 2>/dev/null | head -n 1); [ -n \"\$f\" ] && grep -i AutoBrightnessGuard \"\$f\"'"
+                                    command = "su -c 'for f in \$(ls -t /data/adb/vector/log/*.log /data/adb/lsp/log/*.log /data/adb/lspd/log/*.log /data/adb/*/log/*.log 2>/dev/null | head -n 3); do [ -r \"\$f\" ] && grep -i AutoBrightnessGuard \"\$f\"; done'"
                                 )
                                 CommandItem(
                                     title = stringResource(R.string.cmd_2_title),
