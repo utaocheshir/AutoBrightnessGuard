@@ -4,13 +4,20 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
+import android.provider.Settings
+import android.widget.Toast
+import androidx.core.content.FileProvider
 import com.banoku.oplus.autobrightness.BuildConfig
+import com.banoku.oplus.autobrightness.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -130,6 +137,123 @@ object UpdateChecker {
         if (rSuffix.isNotEmpty() && cSuffix.isEmpty()) return false
 
         return rSuffix > cSuffix
+    }
+
+    suspend fun downloadApkWithProgress(
+        context: Context,
+        downloadUrl: String,
+        fileName: String = "AutoBrightnessGuard-Update.apk",
+        onProgress: (Int) -> Unit
+    ): File? = withContext(Dispatchers.IO) {
+        var currentUrl = downloadUrl
+        var redirects = 0
+        var connection: HttpURLConnection? = null
+        try {
+            val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
+            updatesDir.listFiles()?.forEach { old ->
+                if (old.isFile && old.name.endsWith(".apk", ignoreCase = true)) {
+                    old.delete()
+                }
+            }
+            val targetFile = File(updatesDir, fileName)
+
+            while (redirects < 6) {
+                val url = URL(currentUrl)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", "AutoBrightnessGuard-App")
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                }
+                connection = conn
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val location = conn.getHeaderField("Location")
+                    conn.disconnect()
+                    if (location.isNullOrBlank()) return@withContext null
+                    currentUrl = URL(url, location).toString()
+                    redirects++
+                    continue
+                }
+                if (code !in 200..299) {
+                    return@withContext null
+                }
+
+                val totalBytes = conn.contentLengthLong
+                if (totalBytes <= 0L) {
+                    withContext(Dispatchers.Main) { onProgress(-1) }
+                }
+
+                var downloaded = 0L
+                var lastReportedPct = -1
+                BufferedInputStream(conn.inputStream).use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        val buffer = ByteArray(16 * 1024)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            output.write(buffer, 0, read)
+                            downloaded += read
+                            if (totalBytes > 0L) {
+                                val pct = ((downloaded * 100L) / totalBytes).toInt().coerceIn(0, 100)
+                                if (pct != lastReportedPct) {
+                                    lastReportedPct = pct
+                                    withContext(Dispatchers.Main) { onProgress(pct) }
+                                }
+                            }
+                        }
+                        output.flush()
+                    }
+                }
+
+                if (targetFile.exists() && targetFile.length() > 1024L) {
+                    withContext(Dispatchers.Main) { onProgress(100) }
+                    return@withContext targetFile
+                }
+                return@withContext null
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    fun installApkFile(context: Context, apkFile: File): Boolean {
+        if (!apkFile.exists()) return false
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.install_permission_needed),
+                    Toast.LENGTH_LONG
+                ).show()
+                val permIntent = Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${context.packageName}")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(permIntent)
+                return false
+            }
+
+            val apkUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(installIntent)
+            true
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     fun downloadApk(context: Context, downloadUrl: String, fileName: String = "AutoBrightnessGuard-Update.apk") {

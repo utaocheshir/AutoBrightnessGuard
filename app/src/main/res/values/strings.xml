@@ -44,6 +44,10 @@
     <string name="update_available">New update available</string>
     <string name="up_to_date">You are running the latest version</string>
     <string name="download_apk">Download APK</string>
+    <string name="install_apk">Install APK</string>
+    <string name="downloading_apk_pct">Downloading: %d%%</string>
+    <string name="downloading_apk_indet">Downloading APK…</string>
+    <string name="install_permission_needed">Allow installing updates from this source, then tap Install APK</string>
     <string name="view_release">View on GitHub</string>
     <string name="pref_language_title">App Language</string>
     <string name="pref_language_desc">Select application display language</string>
@@ -79,8 +83,13 @@
     <string name="curve_reset">Reset</string>
     <string name="unit_nits">nits</string>
 
+    <string name="pref_floor_card_title">Minimum Brightness &amp; Dark-Env Guard</string>
+    <string name="pref_floor_card_desc">Choose behavior in darkness: Stock (off), Auto 8.5 nits (auto-brightness only + DarkEnv Guard), or Custom unconditional slider floor (+ DarkEnv Guard).</string>
+    <string name="floor_mode_off">Off (Stock)</string>
+    <string name="floor_mode_auto">Auto 8.5 nits</string>
+    <string name="floor_mode_custom">Custom</string>
     <string name="pref_custom_floor_title">Manual Unconditional Minimum Floor</string>
-    <string name="pref_custom_floor_desc">When Night Floor (8.5 nits) is OFF, backlight NEVER drops below this level (0–150 nits) in any mode or app while the screen is lit.</string>
+    <string name="pref_custom_floor_desc">Backlight NEVER drops below this level (1–150 nits) in any mode or app while the screen is lit.</string>
     <string name="pref_custom_floor_off">Off (ROM default)</string>
     <string name="pref_custom_floor_value">Minimum: %.1f nits (Unconditional)</string>
 
@@ -115,6 +124,7 @@
     <string name="os_tag_17_verified">ColorOS 17 (16+*)</string>
     <string name="os_tag_universal">All 12–17</string>
     <string name="panel_range_calibrated">Panel: %.1f–%.0f nits (hardware)</string>
+    <string name="panel_range_calibrated_hbm">Panel: %.1f–%.0f nits (HBM up to %.0f)</string>
     <string name="panel_range_uncalibrated">Est. ceiling: %.0f nits (no root spline)</string>
     <string name="curve_screen_now">Screen: %1$s %2$s</string>
 </resources>

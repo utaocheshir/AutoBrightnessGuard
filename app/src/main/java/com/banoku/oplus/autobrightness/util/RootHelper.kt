@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import com.banoku.oplus.autobrightness.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -14,26 +15,69 @@ import kotlin.math.abs
 
 object RootHelper {
 
+    private val SU_CANDIDATE_PATHS = arrayOf(
+        "/debug_ramdisk/su",
+        "/sbin/su",
+        "/system/bin/su",
+        "/system/xbin/su",
+        "/vendor/bin/su",
+        "/su/bin/su",
+        "/system/sd/xbin/su",
+        "/system/bin/failsafe/su",
+        "/data/adb/ksu/bin/su",
+        "/data/adb/ap/bin/su",
+        "/data/local/xbin/su",
+        "/data/local/bin/su",
+        "/data/local/su"
+    )
+
+    private const val MODULE_LOG_CANDIDATES =
+        "/data/adb/vector/log/modules*.log /data/adb/lspd/log/modules*.log " +
+            "/data/adb/vector/log.old/modules*.log /data/adb/lspd/log.old/modules*.log " +
+            "/data/adb/*/log/modules*.log"
+
+    private const val MODULE_BOOT_PATTERN =
+        "AutoBrightnessGuard.*(starting, sdk=|Hook \\[|HOOK_SUMMARY:|STOCK_CURVE:)"
+
     fun isRootAvailable(): Boolean {
-        val paths = arrayOf(
-            "/system/bin/su",
-            "/system/xbin/su",
-            "/sbin/su",
-            "/system/sd/xbin/su",
-            "/system/bin/failsafe/su",
-            "/data/local/xbin/su",
-            "/data/local/bin/su",
-            "/data/local/su"
-        )
-        for (path in paths) {
+        for (path in SU_CANDIDATE_PATHS) {
             if (File(path).exists()) return true
+        }
+        val pathDirs = System.getenv("PATH")?.split(':') ?: emptyList()
+        for (dir in pathDirs) {
+            if (dir.isNotBlank() && File(dir, "su").exists()) return true
         }
         return false
     }
 
-    suspend fun executeSuCommand(cmd: String): CommandResult = withContext(Dispatchers.IO) {
-        try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+    /**
+     * Authoritative runtime root check across Magisk (incl. Alpha/Kitsune), KernelSU,
+     * KernelSU-Next, BakaSU (SuSFS), SukiSU, and APatch via actual `su -c id -u`.
+     */
+    suspend fun checkRootAccess(): Boolean = withContext(Dispatchers.IO) {
+        val res = executeSuCommand("id -u")
+        if (res.success && res.output.trim() == "0") {
+            return@withContext true
+        }
+        for (bin in listOf("/debug_ramdisk/su", "/data/adb/ksu/bin/su", "/data/adb/ap/bin/su", "/system/bin/su", "/sbin/su")) {
+            if (File(bin).exists()) {
+                val fallback = executeSuBinaryCommand(bin, "id -u")
+                if (fallback.success && fallback.output.trim() == "0") {
+                    return@withContext true
+                }
+            }
+        }
+        false
+    }
+
+    private fun executeSuBinaryCommand(suBinary: String, cmd: String): CommandResult {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf(suBinary, "-c", cmd))
+            // Close stdin immediately so commands like `cat` or `grep` can never hang on empty args
+            try {
+                process.outputStream.close()
+            } catch (_: Throwable) {
+            }
             val output = StringBuilder()
             val error = StringBuilder()
 
@@ -66,41 +110,67 @@ object RootHelper {
         }
     }
 
+    suspend fun executeSuCommand(cmd: String): CommandResult = withContext(Dispatchers.IO) {
+        val direct = executeSuBinaryCommand("su", cmd)
+        if (direct.success || direct.output.isNotEmpty()) {
+            return@withContext direct
+        }
+        for (bin in listOf("/debug_ramdisk/su", "/data/adb/ksu/bin/su", "/data/adb/ap/bin/su")) {
+            if (File(bin).exists()) {
+                return@withContext executeSuBinaryCommand(bin, cmd)
+            }
+        }
+        direct
+    }
+
     suspend fun launchLsposedManager(context: Context) = withContext(Dispatchers.IO) {
-        // 1. Try standard launcher intent
-        val launchIntent = context.packageManager.getLaunchIntentForPackage("org.lsposed.manager")
-        if (launchIntent != null) {
+        val knownManagers = listOf(
+            "org.matrix.vector.manager" to "org.matrix.vector.manager.ui.MainActivity",
+            "org.lsposed.manager" to "org.lsposed.manager.ui.MainActivity",
+            "io.github.lsposed.manager" to "io.github.lsposed.manager.ui.MainActivity",
+            "org.lsposed.lspatch" to "org.lsposed.lspatch.ui.activity.MainActivity"
+        )
+
+        for ((pkg, _) in knownManagers) {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+            if (launchIntent != null) {
+                try {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(launchIntent)
+                    return@withContext
+                } catch (_: Throwable) {
+                }
+            }
+        }
+
+        for ((pkg, activityCls) in knownManagers) {
             try {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launchIntent)
+                val explicitIntent = Intent().apply {
+                    component = ComponentName(pkg, activityCls)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(explicitIntent)
                 return@withContext
-            } catch (ignored: Throwable) {
+            } catch (_: Throwable) {
             }
         }
 
-        // 2. Try explicit component intent
-        try {
-            val explicitIntent = Intent().apply {
-                component = ComponentName("org.lsposed.manager", "org.lsposed.manager.ui.MainActivity")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(explicitIntent)
-            return@withContext
-        } catch (ignored: Throwable) {
-        }
-
-        // 3. Try standard secret code broadcast (android_secret_code://5776733)
+        // Standard secret code broadcast for parasitic LSPosed / Vector manager
         try {
             val secretIntent = Intent("android.telephony.action.SECRET_CODE").apply {
                 data = Uri.parse("android_secret_code://5776733")
                 addFlags(0x00400000) // FLAG_RECEIVER_INCLUDE_BACKGROUND
             }
             context.sendBroadcast(secretIntent)
-        } catch (ignored: Throwable) {
+        } catch (_: Throwable) {
         }
 
-        // 4. Try root command broadcast (exact method used by KernelSU / KSUN)
-        executeSuCommand("am start -n org.lsposed.manager/.ui.MainActivity 2>/dev/null || am broadcast -a android.telephony.action.SECRET_CODE -d android_secret_code://5776733")
+        // Root shell fallback for standalone or parasitic managers (Vector / LSPosed / ReLSPosed)
+        executeSuCommand(
+            "am start -n org.matrix.vector.manager/.ui.MainActivity 2>/dev/null " +
+                "|| am start -n org.lsposed.manager/.ui.MainActivity 2>/dev/null " +
+                "|| am broadcast -a android.telephony.action.SECRET_CODE -d android_secret_code://5776733 2>/dev/null"
+        )
     }
 
     suspend fun setSystemProperty(key: String, enabled: Boolean): Boolean {
@@ -121,28 +191,41 @@ object RootHelper {
     }
 
     suspend fun readModuleLogs(): List<LogEntry> = withContext(Dispatchers.IO) {
-        // 1. Try reading the most recent LSPosed module log file directly (/data/adb/lspd/log/modules_*.log)
-        val lspCmd = "cat \$(ls -t /data/adb/lspd/log/modules_*.log 2>/dev/null | head -n 1) 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 120"
-        var result = executeSuCommand(lspCmd)
-        if (result.success && result.output.isNotBlank()) {
+        // 1. Check the most recent LSPosed / Vector / JingMatrix / ReLSPosed module log file safely.
+        // Guard `[ -n "$f" ]` ensures we never invoke cat/grep on empty filename.
+        // Also fetch boot/hook summary lines so long uptime does not evict hook verification past tail -n 150.
+        val latestCmd =
+            "f=\$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 1); " +
+                "if [ -n \"\$f\" ] && [ -r \"\$f\" ]; then " +
+                "grep -iE '$MODULE_BOOT_PATTERN' \"\$f\" 2>/dev/null | tail -n 30; " +
+                "grep -i AutoBrightnessGuard \"\$f\" 2>/dev/null | tail -n 150; " +
+                "fi"
+        var result = executeSuCommand(latestCmd)
+        if (result.output.isNotBlank()) {
             return@withContext parseLogs(result.output).reversed()
         }
 
-        // 2. Try wildcard LSPosed log files
-        result = executeSuCommand("cat /data/adb/lspd/log/modules*.log 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 120")
-        if (result.success && result.output.isNotBlank()) {
+        // 2. Fallback across all rotated LSPosed / Vector log files
+        val wildcardCmd =
+            "grep -ihE '$MODULE_BOOT_PATTERN' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 30; " +
+                "grep -ih AutoBrightnessGuard $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 150"
+        result = executeSuCommand(wildcardCmd)
+        if (result.output.isNotBlank()) {
             return@withContext parseLogs(result.output).reversed()
         }
 
-        // 3. Try logcat across all buffers (-b all includes system buffer where system_server lives)
-        result = executeSuCommand("logcat -d -b all -s AutoBrightnessGuard:V | tail -n 120")
-        if (result.success && result.output.isNotBlank()) {
+        // 3. Logcat across all buffers via grep (catches both AutoBrightnessGuard tag AND LSPosedFramework/VectorDaemon)
+        val logcatGrepCmd =
+            "logcat -d -b all 2>/dev/null | grep -iE '$MODULE_BOOT_PATTERN' | tail -n 30; " +
+                "logcat -d -b all 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 150"
+        result = executeSuCommand(logcatGrepCmd)
+        if (result.output.isNotBlank()) {
             return@withContext parseLogs(result.output).reversed()
         }
 
-        // 4. Try logcat grep across all buffers
-        result = executeSuCommand("logcat -d -b all | grep -i AutoBrightnessGuard | tail -n 120")
-        if (result.success && result.output.isNotBlank()) {
+        // 4. Direct logcat tag filter fallback
+        result = executeSuCommand("logcat -d -b all -s AutoBrightnessGuard:V 2>/dev/null | tail -n 150")
+        if (result.output.isNotBlank()) {
             return@withContext parseLogs(result.output).reversed()
         }
 
@@ -151,13 +234,13 @@ object RootHelper {
 
     suspend fun readLatestStockCurveFromLogs(): List<Float>? = withContext(Dispatchers.IO) {
         val cmds = listOf(
-            "grep -F 'STOCK_CURVE:' \$(ls -t /data/adb/lspd/log/modules_*.log 2>/dev/null | head -n 1) 2>/dev/null | tail -n 1",
-            "grep -F 'STOCK_CURVE:' /data/adb/lspd/log/modules*.log 2>/dev/null | tail -n 1",
-            "logcat -d -b all -s AutoBrightnessGuard:V 2>/dev/null | grep -F 'STOCK_CURVE:' | tail -n 1"
+            "f=\$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 1); [ -n \"\$f\" ] && grep -F 'STOCK_CURVE:' \"\$f\" 2>/dev/null | tail -n 1",
+            "grep -Fh 'STOCK_CURVE:' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 1",
+            "logcat -d -b all 2>/dev/null | grep -i AutoBrightnessGuard | grep -F 'STOCK_CURVE:' | tail -n 1"
         )
         for (cmd in cmds) {
             val res = executeSuCommand(cmd)
-            if (res.success && res.output.isNotBlank()) {
+            if (res.output.isNotBlank()) {
                 val parsed = extractLatestStockCurve(parseLogs(res.output))
                 if (parsed != null) return@withContext parsed
             }
@@ -175,7 +258,10 @@ object RootHelper {
     }
 
     fun parseSplinePairs(line: String): List<Pair<Float, Float>> {
-        val pairRegex = Regex("\\(\\s*([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)\\s*,\\s*([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)\\s*\\)")
+        // Supports both 2-part "(x, y)" and ColorOS/Android 17 3-part "(x, y: slope)" tuples
+        val pairRegex = Regex(
+            "\\(\\s*([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)\\s*,\\s*([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)(?:\\s*:\\s*[-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)?\\s*\\)"
+        )
         val list = ArrayList<Pair<Float, Float>>()
         for (match in pairRegex.findAll(line)) {
             val x = match.groupValues[1].toFloatOrNull()
@@ -228,9 +314,13 @@ object RootHelper {
         var pendingConfigBacklight: List<Float> = emptyList()
 
         var liveNit: Float? = null
-        var liveBrightnessFloat: Float? = null
+        var liveBrightnessRaw: Float? = null
         var minNit: Float? = null
+        var normalMaxNit: Float? = null
         var maxNit: Float? = null
+        var brightnessMin: Float? = null
+        var normalBrightnessMax: Float? = null
+        var panelBrightnessMax: Float? = null
         var inIdleMode = false
 
         val liveNitRegex = Regex(
@@ -238,15 +328,31 @@ object RootHelper {
             RegexOption.IGNORE_CASE
         )
         val liveBrightnessRegex = Regex(
-            "(?<![A-Za-z0-9_])(mCurrentScreenBrightness|mScreenBrightness|screenBrightness)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            "(?<![A-Za-z0-9_])(mCurrentScreenBrightness|Display Brightness|mScreenBrightness|mLatestFloatBrightness|screenBrightness)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
             RegexOption.IGNORE_CASE
         )
         val minNitRegex = Regex(
-            "(?<![A-Za-z0-9_])(mMinNits|minNits|mNormalMinNits|desiredMinLuminance)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            "(?<![A-Za-z0-9_])(mMinNits|mMinNit|minNits|mNormalMinNits|mNormalMinNit|desiredMinLuminance|mMinLuminance)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+        val normalMaxNitRegex = Regex(
+            "(?<![A-Za-z0-9_])(mNormalMaxNits|mNormalMaxNit)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
             RegexOption.IGNORE_CASE
         )
         val maxNitRegex = Regex(
-            "(?<![A-Za-z0-9_])(mHbmMaxNits|mMaxNits|maxNits|mNormalMaxNits|mBrightnessMaxNit|desiredMaxLuminance)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            "(?<![A-Za-z0-9_])(mHbmMaxNits|mHbmMaxNit|mMaxNits|mMaxNit|maxNits|mBrightnessMaxNit|desiredMaxLuminance|mMaxLuminance)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+        val bMinRegex = Regex(
+            "(?<![A-Za-z0-9_])(mMinBrightness|mScreenBrightnessRangeMinimum|brightnessMin)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+        val bNormalMaxRegex = Regex(
+            "(?<![A-Za-z0-9_])(mMaxBrightness|mScreenBrightnessNormalMaximum|brightnessMax)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
+            RegexOption.IGNORE_CASE
+        )
+        val bPanelMaxRegex = Regex(
+            "(?<![A-Za-z0-9_])(mMaxPanelBrightness|mScreenBrightnessRangeMaximum|mTotalBrightness)\\s*[=:]\\s*([0-9]+(?:\\.[0-9]+)?)",
             RegexOption.IGNORE_CASE
         )
 
@@ -282,14 +388,18 @@ object RootHelper {
                             }
                         }
                         !inIdleMode && lastX >= 500f && lastY >= 20f &&
-                            !lower.contains("nitstobacklight") && !lower.contains("nitstobrightness") -> {
+                            !lower.contains("nitstobacklight") && !lower.contains("nitstobrightness") &&
+                            !lower.contains("minimumbrightnesscurve") -> {
                             when {
                                 lower.contains("mdefaultspline") || lower.contains("defaultspline") -> {
                                     if (defaultLuxCurvePairs.isEmpty()) defaultLuxCurvePairs = pairs
                                 }
-                                lower.contains("mspline") || lower.contains("luxtonits") ||
-                                    lower.contains("autobrightness") || lower.contains("curve") -> {
-                                    if (activeLuxCurvePairs.isEmpty()) activeLuxCurvePairs = pairs
+                                lower.contains("mspline") || lower.contains("splinecurve") ||
+                                    lower.contains("luxtonits") || lower.contains("autobrightness") ||
+                                    lower.contains("curve") -> {
+                                    if (activeLuxCurvePairs.isEmpty() || pairs.size > activeLuxCurvePairs.size) {
+                                        activeLuxCurvePairs = pairs
+                                    }
                                 }
                             }
                         }
@@ -318,7 +428,7 @@ object RootHelper {
             if (lower.contains("mnitsrange=[") || lower.contains("nitsrange=[")) {
                 val range = parseFloatArrayBracket(line)
                 if (range.size == 2) {
-                    if (minNit == null && range[0] in 0.5f..50f) minNit = range[0]
+                    if (minNit == null && range[0] in 0.1f..50f) minNit = range[0]
                     if (range[1] in 200f..6000f) maxNit = maxOf(maxNit ?: 0f, range[1])
                 }
             }
@@ -332,18 +442,26 @@ object RootHelper {
             }
 
             val blMatch = liveBrightnessRegex.find(line)
-            if (blMatch != null && liveBrightnessFloat == null) {
+            if (blMatch != null && liveBrightnessRaw == null) {
                 val v = blMatch.groupValues[2].toFloatOrNull()
-                if (v != null && v in 0f..1f) {
-                    liveBrightnessFloat = v
+                if (v != null && v in 0f..20000f) {
+                    liveBrightnessRaw = v
                 }
             }
 
             val minMatch = minNitRegex.find(line)
             if (minMatch != null && minNit == null) {
                 val v = minMatch.groupValues[2].toFloatOrNull()
-                if (v != null && v in 0.5f..50f) {
+                if (v != null && v in 0.1f..50f) {
                     minNit = v
+                }
+            }
+
+            val normalMaxMatch = normalMaxNitRegex.find(line)
+            if (normalMaxMatch != null) {
+                val v = normalMaxMatch.groupValues[2].toFloatOrNull()
+                if (v != null && v in 150f..6000f) {
+                    normalMaxNit = maxOf(normalMaxNit ?: 0f, v)
                 }
             }
 
@@ -352,6 +470,30 @@ object RootHelper {
                 val v = maxMatch.groupValues[2].toFloatOrNull()
                 if (v != null && v in 200f..6000f) {
                     maxNit = maxOf(maxNit ?: 0f, v)
+                }
+            }
+
+            val bMinMatch = bMinRegex.find(line)
+            if (bMinMatch != null && brightnessMin == null) {
+                val v = bMinMatch.groupValues[2].toFloatOrNull()
+                if (v != null && v in 0f..100f) {
+                    brightnessMin = v
+                }
+            }
+
+            val bNormMaxMatch = bNormalMaxRegex.find(line)
+            if (bNormMaxMatch != null) {
+                val v = bNormMaxMatch.groupValues[2].toFloatOrNull()
+                if (v != null && v > 10f) {
+                    normalBrightnessMax = maxOf(normalBrightnessMax ?: 0f, v)
+                }
+            }
+
+            val bPanelMaxMatch = bPanelMaxRegex.find(line)
+            if (bPanelMaxMatch != null) {
+                val v = bPanelMaxMatch.groupValues[2].toFloatOrNull()
+                if (v != null && v > 10f) {
+                    panelBrightnessMax = maxOf(panelBrightnessMax ?: 0f, v)
                 }
             }
         }
@@ -364,13 +506,6 @@ object RootHelper {
             else -> emptyList()
         }
 
-        val effectiveMinNit = resolvedBacklightSpline.firstOrNull()?.second?.takeIf { it in 0.1f..50f } ?: minNit
-        val effectiveMaxNit = resolvedBacklightSpline.lastOrNull()?.second?.takeIf { it >= 100f } ?: maxNit
-
-        if (liveNit == null && liveBrightnessFloat != null && resolvedBacklightSpline.isNotEmpty()) {
-            liveNit = interpolateLinearPairs(resolvedBacklightSpline, liveBrightnessFloat)
-        }
-
         val chosenLuxCurvePairs = when {
             activeLuxCurvePairs.isNotEmpty() -> activeLuxCurvePairs
             defaultLuxCurvePairs.isNotEmpty() -> defaultLuxCurvePairs
@@ -380,6 +515,23 @@ object RootHelper {
                     lx to n
                 }
             else -> emptyList()
+        }
+
+        val curveMinNit = chosenLuxCurvePairs.firstOrNull()?.second?.takeIf { it in 0.5f..50f }
+        val curvePeakNit = chosenLuxCurvePairs.lastOrNull()?.second?.takeIf { it >= 200f }
+
+        val effectiveMinNit = resolvedBacklightSpline.firstOrNull()?.second?.takeIf { it in 0.1f..50f }
+            ?: curveMinNit
+            ?: minNit
+        val effectiveMaxNit = listOfNotNull(
+            resolvedBacklightSpline.lastOrNull()?.second?.takeIf { it >= 100f },
+            curvePeakNit,
+            maxNit,
+            normalMaxNit
+        ).maxOrNull()
+
+        if (liveNit == null && liveBrightnessRaw != null && liveBrightnessRaw in 0f..1f && resolvedBacklightSpline.isNotEmpty()) {
+            liveNit = interpolateLinearPairs(resolvedBacklightSpline, liveBrightnessRaw)
         }
 
         val romCurveNits = if (chosenLuxCurvePairs.size >= 2) {
@@ -395,12 +547,59 @@ object RootHelper {
 
         return DisplayCalibration(
             liveNit = liveNit,
-            liveBrightnessFloat = liveBrightnessFloat,
+            liveBrightnessFloat = liveBrightnessRaw,
             minNit = effectiveMinNit,
+            normalMaxNit = normalMaxNit,
             maxNit = effectiveMaxNit,
+            brightnessMin = brightnessMin,
+            normalBrightnessMax = normalBrightnessMax,
+            panelBrightnessMax = panelBrightnessMax,
             backlightToNits = resolvedBacklightSpline,
             romCurveNits = romCurveNits
         )
+    }
+
+    /**
+     * Resolves display brightness fraction in [0..1] of the normal slider range (and optional >1 HBM boost)
+     * across both AOSP normalized [0..1] floats and ColorOS raw [6..4095..4674] floats.
+     */
+    fun resolveBrightnessFraction(
+        brightnessFloat: Float,
+        brightnessInt: Int,
+        calibration: DisplayCalibration?
+    ): Float {
+        if (brightnessFloat in 0f..1f) {
+            return brightnessFloat
+        }
+        if (brightnessFloat > 1.0f) {
+            val bMin = calibration?.brightnessMin ?: 0f
+            val bNormMax = calibration?.normalBrightnessMax
+                ?: DeviceCompatibility.getMultibrightnessMax(brightnessFloat.toInt()).toFloat()
+            val span = (bNormMax - bMin).coerceAtLeast(1f)
+            return ((brightnessFloat - bMin) / span).coerceIn(0f, 1.5f)
+        }
+        if (brightnessInt >= 0) {
+            val bMin = calibration?.brightnessMin ?: 0f
+            val scale = if (brightnessInt > 255) {
+                (calibration?.normalBrightnessMax ?: DeviceCompatibility.getMultibrightnessMax(brightnessInt).toFloat())
+            } else {
+                255f
+            }
+            val span = (scale - bMin).coerceAtLeast(1f)
+            return ((brightnessInt - bMin) / span).coerceIn(0f, 1.5f)
+        }
+        val calRaw = calibration?.liveBrightnessFloat
+        if (calRaw != null) {
+            if (calRaw in 0f..1f) return calRaw
+            if (calRaw > 1.0f) {
+                val bMin = calibration.brightnessMin ?: 0f
+                val bNormMax = calibration.normalBrightnessMax
+                    ?: DeviceCompatibility.getMultibrightnessMax(calRaw.toInt()).toFloat()
+                val span = (bNormMax - bMin).coerceAtLeast(1f)
+                return ((calRaw - bMin) / span).coerceIn(0f, 1.5f)
+            }
+        }
+        return -1f
     }
 
     /**
@@ -410,17 +609,18 @@ object RootHelper {
         fraction: Float,
         calibration: DisplayCalibration?,
         fallbackMinNit: Float,
-        fallbackMaxNit: Float
+        fallbackMaxNit: Float,
+        rawBrightness: Float = -1f
     ): Pair<Float?, Boolean> {
         if (fraction < 0f || fraction.isNaN() || fraction.isInfinite()) {
             val live = calibration?.liveNit
             return if (live != null && live >= 0f) live to true else null to false
         }
         if (fraction <= 0f) {
-            val exact = calibration != null && (calibration.backlightToNits.isNotEmpty() || calibration.liveNit != null)
+            val exact = calibration != null && calibration.hasRealCalibration
             return 0f to exact
         }
-        if (calibration != null && calibration.backlightToNits.isNotEmpty()) {
+        if (calibration != null && calibration.backlightToNits.isNotEmpty() && fraction <= 1.0f) {
             val mapped = interpolateLinearPairs(calibration.backlightToNits, fraction)
             if (mapped != null && mapped >= 0f) {
                 return mapped to true
@@ -428,16 +628,34 @@ object RootHelper {
         }
         val live = calibration?.liveNit
         val calBl = calibration?.liveBrightnessFloat
-        if (live != null && live >= 0f && (calBl == null || abs(calBl - fraction) <= 0.025f)) {
+        if (live != null && live >= 0f && (calBl == null || abs(calBl - fraction) <= 0.025f || (rawBrightness > 1f && abs(calBl - rawBrightness) <= 10f))) {
             return live to true
         }
         val effectiveMin = calibration?.minNit ?: fallbackMinNit
-        val effectiveMax = calibration?.maxNit ?: fallbackMaxNit
-        val hasBounds = calibration?.maxNit != null
+        val normalPeak = calibration?.normalMaxNit
+        val panelPeak = calibration?.maxNit ?: fallbackMaxNit
+        val hasBounds = calibration?.hasRealCalibration == true
+
+        // If ColorOS reports raw brightness above mMaxBrightness (e.g. > 4095 up to 4674 in HBM),
+        // interpolate cleanly from normalMaxNit (~798) up to panelPeak (1800..2000).
+        if (normalPeak != null && panelPeak > normalPeak + 20f) {
+            val bNormMax = calibration?.normalBrightnessMax ?: 4095f
+            val bPanelMax = calibration?.panelBrightnessMax?.takeIf { it > bNormMax } ?: bNormMax
+            if (rawBrightness > bNormMax && bPanelMax > bNormMax) {
+                val hbmT = ((rawBrightness - bNormMax) / (bPanelMax - bNormMax)).coerceIn(0f, 1f)
+                return (normalPeak + hbmT * (panelPeak - normalPeak)) to hasBounds
+            }
+            return com.banoku.oplus.autobrightness.BrightnessMath.estimateScreenNits(
+                fraction.coerceIn(0f, 1f),
+                effectiveMin,
+                normalPeak
+            ) to hasBounds
+        }
+
         return com.banoku.oplus.autobrightness.BrightnessMath.estimateScreenNits(
-            fraction,
+            fraction.coerceIn(0f, 1f),
             effectiveMin,
-            effectiveMax
+            panelPeak
         ) to hasBounds
     }
 
@@ -446,7 +664,7 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:10",
-                message = "v1.4.4 (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
+                message = "v${BuildConfig.VERSION_NAME} (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
             ),
             LogEntry(
                 type = LogType.HOOK,
@@ -506,7 +724,7 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:11",
-                message = "HOOK_SUMMARY:installed=10/10,version=1.4.4,sdk=${Build.VERSION.SDK_INT},hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK"
+                message = "HOOK_SUMMARY:installed=10/10,version=${BuildConfig.VERSION_NAME},sdk=${Build.VERSION.SDK_INT},hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK"
             ),
             LogEntry(
                 type = LogType.INFO,
@@ -710,21 +928,26 @@ object RootHelper {
         return executeSuCommand("killall system_server")
     }
 
-    private fun parseLogs(raw: String): List<LogEntry> {
-        return raw.lineSequence().filter { it.isNotBlank() }.map { line ->
-            val type = when {
-                line.contains("BLOCKED", ignoreCase = true) -> LogType.BLOCKED
-                line.contains("hook installed", ignoreCase = true) || line.contains("Hook [", ignoreCase = true) -> LogType.HOOK
-                line.contains("passed reset", ignoreCase = true) -> LogType.PASS
-                line.contains("failed", ignoreCase = true) || line.contains("error", ignoreCase = true) -> LogType.ERROR
-                else -> LogType.INFO
+    fun parseLogs(raw: String): List<LogEntry> {
+        return raw.lineSequence()
+            .filter { it.isNotBlank() }
+            .distinct()
+            .map { line ->
+                val cleaned = cleanLogMessage(line)
+                val type = when {
+                    cleaned.contains("BLOCKED", ignoreCase = true) -> LogType.BLOCKED
+                    cleaned.contains("hook installed", ignoreCase = true) || cleaned.contains("Hook [", ignoreCase = true) -> LogType.HOOK
+                    cleaned.contains("passed reset", ignoreCase = true) -> LogType.PASS
+                    cleaned.contains("failed", ignoreCase = true) || cleaned.contains("error", ignoreCase = true) -> LogType.ERROR
+                    else -> LogType.INFO
+                }
+                LogEntry(
+                    type = type,
+                    time = extractTime(line),
+                    message = cleaned
+                )
             }
-            LogEntry(
-                type = type,
-                time = extractTime(line),
-                message = cleanLogMessage(line)
-            )
-        }.toList()
+            .toList()
     }
 
     private fun extractTime(line: String): String {
@@ -744,13 +967,20 @@ object RootHelper {
         return ""
     }
 
-    private fun cleanLogMessage(line: String): String {
-        // Strip LSPosed prefix e.g. [ ... I/LSPosedFramework ] (system)[...AutoBrightnessGuard...] BLOCKED ...
+    fun cleanLogMessage(line: String): String {
         val guardIdx = line.indexOf("AutoBrightnessGuard")
         if (guardIdx != -1) {
+            // 1. LSPosed / Vector prefix: `[...,AutoBrightnessGuard,...] <message>`
+            // Only treat `]` as prefix terminator if no new `[` starts before `]` (avoids chopping `Hook [1/10]`).
             val afterBracket = line.indexOf(']', guardIdx)
-            if (afterBracket != -1 && afterBracket + 1 < line.length) {
+            val nextOpen = line.indexOf('[', guardIdx)
+            if (afterBracket != -1 && (nextOpen == -1 || nextOpen > afterBracket) && afterBracket + 1 < line.length) {
                 return line.substring(afterBracket + 1).trim()
+            }
+            // 2. Logcat prefix: `11-14 20:08:47.276 1000 28821 28821 W AutoBrightnessGuard: <message>`
+            val afterColon = line.indexOf(':', guardIdx + "AutoBrightnessGuard".length)
+            if (afterColon != -1 && afterColon + 1 < line.length) {
+                return line.substring(afterColon + 1).trim()
             }
         }
         return line.trim()
@@ -811,10 +1041,14 @@ data class DisplayCalibration(
     val liveNit: Float? = null,
     val liveBrightnessFloat: Float? = null,
     val minNit: Float? = null,
+    val normalMaxNit: Float? = null,
     val maxNit: Float? = null,
+    val brightnessMin: Float? = null,
+    val normalBrightnessMax: Float? = null,
+    val panelBrightnessMax: Float? = null,
     val backlightToNits: List<Pair<Float, Float>> = emptyList(),
     val romCurveNits: List<Float>? = null
 ) {
     val hasRealCalibration: Boolean
-        get() = backlightToNits.isNotEmpty() || liveNit != null || maxNit != null
+        get() = backlightToNits.isNotEmpty() || liveNit != null || normalMaxNit != null || maxNit != null
 }

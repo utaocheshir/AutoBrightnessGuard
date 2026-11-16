@@ -17,7 +17,7 @@ class ModuleUnitTest {
 
     @Test
     fun versionAndTagCheck() {
-        assertEquals("1.4.4", AutoBrightnessModule.VERSION)
+        assertEquals("1.4.5", AutoBrightnessModule.VERSION)
         assertEquals("AutoBrightnessGuard", AutoBrightnessModule.TAG)
         assertEquals("persist.autobrightness.block_reset", AutoBrightnessModule.PROP_BLOCK_RESET)
         assertEquals("persist.autobrightness.block_ambient", AutoBrightnessModule.PROP_BLOCK_AMBIENT)
@@ -139,11 +139,12 @@ class ModuleUnitTest {
     fun updateCheckerVersionComparison() {
         assertFalse(UpdateChecker.isVersionNewer("V1.3b", "1.3b"))
         assertFalse(UpdateChecker.isVersionNewer("v1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("1.4.4", "1.4.4"))
+        assertFalse(UpdateChecker.isVersionNewer("1.4.5", "1.4.5"))
+        assertTrue(UpdateChecker.isVersionNewer("1.4.5", "1.4.4"))
         assertTrue(UpdateChecker.isVersionNewer("1.4.4", "1.4.3"))
         assertTrue(UpdateChecker.isVersionNewer("1.4.3", "1.4.2"))
         assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.4.4"))
+        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.4.5"))
     }
 
     @Test
@@ -158,15 +159,15 @@ class ModuleUnitTest {
         assertEquals(2, stats.totalBlocked)
         assertEquals("20:11:49", stats.lastBlockedTime)
 
-        val runtimeStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "1.4.4")
+        val runtimeStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, AutoBrightnessModule.VERSION)
         assertTrue(runtimeStatus.moduleDetected)
-        assertEquals("1.4.4", runtimeStatus.loadedVersion)
+        assertEquals(AutoBrightnessModule.VERSION, runtimeStatus.loadedVersion)
         assertFalse(runtimeStatus.isVersionMismatch)
         assertEquals(10, runtimeStatus.totalCount)
         assertEquals(10, runtimeStatus.installedCount)
         assertTrue(runtimeStatus.hooks.all { it.state == HookState.INSTALLED })
 
-        val mismatchStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "1.4.5")
+        val mismatchStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "9.9.9")
         assertTrue(mismatchStatus.isVersionMismatch)
 
         val stockCurve = RootHelper.extractLatestStockCurve(sampleLogs)
@@ -174,6 +175,43 @@ class ModuleUnitTest {
         assertEquals(7, stockCurve!!.size)
         assertEquals(8.5f, stockCurve[0], 0.01f)
         assertEquals(600f, stockCurve[6], 0.01f)
+    }
+
+    @Test
+    fun vectorAndLogcatBracketParsingCheck() {
+        // Logcat line with brackets inside message (Hook [1/10]) must NOT be chopped at first ']'
+        val logcatHook = "11-15 08:12:01.123  1000  1234  1234 I AutoBrightnessGuard: Hook [1/10] controller resetAutoBrightness installed"
+        assertEquals(
+            "Hook [1/10] controller resetAutoBrightness installed",
+            RootHelper.cleanLogMessage(logcatHook)
+        )
+
+        val logcatHyst = "11-15 08:12:05.456  1000  1234  1234 I AutoBrightnessGuard: GUARD hysteresis (1.8x) at 45.0 lx: [34.0..58.0] -> [23.2..72.4]"
+        assertEquals(
+            "GUARD hysteresis (1.8x) at 45.0 lx: [34.0..58.0] -> [23.2..72.4]",
+            RootHelper.cleanLogMessage(logcatHyst)
+        )
+
+        val vectorBoot = "[ 2026-11-15T08:12:00.001 1000:1234:1234 I/Vector(AutoBrightnessGuard) ] v1.4.5 (ColorOS 17 Verified Engine) starting, sdk=36, build=test"
+        assertEquals(
+            "v1.4.5 (ColorOS 17 Verified Engine) starting, sdk=36, build=test",
+            RootHelper.cleanLogMessage(vectorBoot)
+        )
+
+        val rawCombined = listOf(
+            vectorBoot,
+            logcatHook,
+            logcatHook, // duplicate line from boot+tail grep should deduplicate
+            "11-15 08:12:02.000 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=10/10,version=1.4.5,sdk=36,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK"
+        ).joinToString("\n")
+
+        val entries = RootHelper.parseLogs(rawCombined).reversed()
+        assertEquals(3, entries.size)
+        val status = RootHelper.parseModuleRuntimeStatus(entries, "1.4.5")
+        assertTrue(status.moduleDetected)
+        assertEquals("1.4.5", status.loadedVersion)
+        assertFalse(status.isVersionMismatch)
+        assertEquals(10, status.installedCount)
     }
 
     @Test
@@ -229,5 +267,58 @@ class ModuleUnitTest {
         val (nits100, exact100) = RootHelper.resolveScreenNits(1.0f, invCal, 2f, 500f)
         assertTrue(exact100)
         assertEquals(2400.0f, nits100!!, 0.5f)
+    }
+
+    @Test
+    fun colorOs17DumpCalibrationCheck() {
+        val colorOs17Dump = """
+            DISPLAY MANAGER (dumpsys display)
+              mMinimumBrightnessCurve=[(0.0, 0.0), (2000.0, 50.0), (4000.0, 90.0)]
+            Display States: size=1
+              Display Brightness=1880.0
+              DisplayDeviceInfo{"Встроенный экран": hdrCapabilities HdrCapabilities{mSupportedHdrTypes=[1, 2, 3, 4], mMaxLuminance=2000.0, mMaxAverageLuminance=2000.0, mMinLuminance=0.2}}
+              mMaxBrightness=1.0
+            OplusDisplayPowerControllerExtImpl:
+                BrightnessModel:
+                    mMinBrightness=6.0
+                    mMaxBrightness=4095.0
+                    mNormalMaxNit=798.2865
+                    mTotalBrightness=4674.0
+                    mMaxPanelBrightness=4674.0
+                    splineCurve=MonotoneCubicSpline{[(0.0, 2.5: 2.5), (5.0, 15.4: 2.6), (25.0, 50.0: 1.0), (100.0, 82.0: 0.23362012), (500.0, 113.0: 0.075), (2000.0, 243.0: 0.092), (10000.0, 500.0: 0.010624999), (50000.0, 700.0: 0.005), (270000.0, 1800.0: 0.005)]}
+            BrightnessSynchronizer:
+              mLatestIntBrightness=255
+              mLatestFloatBrightness=1825.6786
+        """.trimIndent()
+
+        val cal = RootHelper.parseDisplayCalibration(colorOs17Dump)
+        assertTrue(cal.hasRealCalibration)
+        assertEquals(2.5f, cal.minNit!!, 0.01f)
+        assertEquals(798.2865f, cal.normalMaxNit!!, 0.01f)
+        assertEquals(2000.0f, cal.maxNit!!, 0.01f)
+        assertEquals(6.0f, cal.brightnessMin!!, 0.01f)
+        assertEquals(4095.0f, cal.normalBrightnessMax!!, 0.01f)
+        assertEquals(4674.0f, cal.panelBrightnessMax!!, 0.01f)
+        assertEquals(1880.0f, cal.liveBrightnessFloat!!, 0.01f)
+        assertNotNull(cal.romCurveNits)
+        assertEquals(2.5f, cal.romCurveNits!![0], 0.01f)
+        assertEquals(500.0f, cal.romCurveNits!![6], 0.01f)
+
+        // Raw panel float 1880.0 on 6..4095 scale must NOT clamp to 100% from int=255
+        val frac = RootHelper.resolveBrightnessFraction(1880.0f, 255, cal)
+        assertEquals((1880f - 6f) / (4095f - 6f), frac, 0.005f)
+        assertTrue(frac in 0.44f..0.47f)
+
+        val (liveNits, exact) = RootHelper.resolveScreenNits(frac, cal, 2f, 500f, rawBrightness = 1880.0f)
+        assertTrue(exact)
+        assertNotNull(liveNits)
+        assertTrue(liveNits!! in 130f..160f)
+
+        // HBM boost above mMaxBrightness (4674 vs 4095) should map up to panel maxNit (2000)
+        val hbmFrac = RootHelper.resolveBrightnessFraction(4674.0f, 255, cal)
+        assertTrue(hbmFrac > 1.05f)
+        val (hbmNits, hbmExact) = RootHelper.resolveScreenNits(hbmFrac, cal, 2f, 500f, rawBrightness = 4674.0f)
+        assertTrue(hbmExact)
+        assertEquals(2000.0f, hbmNits!!, 1.0f)
     }
 }

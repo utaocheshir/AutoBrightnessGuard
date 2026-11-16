@@ -63,7 +63,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
 import com.banoku.oplus.autobrightness.R
-import com.banoku.oplus.autobrightness.util.DeviceCompatibility
 import com.banoku.oplus.autobrightness.util.DisplayCalibration
 import com.banoku.oplus.autobrightness.util.RootHelper
 import kotlinx.coroutines.delay
@@ -179,6 +178,7 @@ fun LightSensorsCard(
     val panelRange = remember(context, stockCurveNits, displayCalibration) {
         val calMin = displayCalibration?.minNit?.takeIf { it in 0.1f..50f }
         val calMax = displayCalibration?.maxNit?.takeIf { it >= 200f }
+        val calNormalMax = displayCalibration?.normalMaxNit?.takeIf { it >= 150f }
         val stockMin = stockCurveNits?.firstOrNull()?.takeIf { it in 1f..50f }
         val stockMax = stockCurveNits?.lastOrNull()?.takeIf { it >= 200f }
         val hdrCaps = try {
@@ -194,31 +194,32 @@ fun LightSensorsCard(
         // Use desiredMaxLuminance (actual panel peak), NOT desiredMaxAverageLuminance (which OnePlus hardcodes to 500)
         val hdrPeak = hdrCaps?.desiredMaxLuminance?.takeIf { it in 400f..6000f }
         val minNit = calMin ?: stockMin ?: hdrMin ?: 2.0f
-        val maxNit = (calMax ?: stockMax ?: hdrPeak ?: 1600f).coerceIn(250f, 6000f)
+        val maxNit = (calMax ?: calNormalMax ?: hdrPeak ?: stockMax ?: 1600f).coerceIn(250f, 6000f)
         minNit to maxNit
     }
 
-    val brightnessFraction = remember(brightnessFloat, brightnessInt) {
-        when {
-            brightnessFloat in 0f..1f -> brightnessFloat
-            brightnessInt >= 0 -> {
-                val scale = if (brightnessInt > 255) {
-                    DeviceCompatibility.getMultibrightnessMax(brightnessInt).toFloat()
-                } else {
-                    255f
-                }
-                (brightnessInt / scale).coerceIn(0f, 1f)
-            }
-            else -> -1f
-        }
+    val brightnessFraction = remember(brightnessFloat, brightnessInt, displayCalibration) {
+        RootHelper.resolveBrightnessFraction(
+            brightnessFloat = brightnessFloat,
+            brightnessInt = brightnessInt,
+            calibration = displayCalibration
+        )
     }
 
-    val (resolvedNits, isExactCalibration) = remember(brightnessFraction, displayCalibration, panelRange) {
+    val (resolvedNits, isExactCalibration) = remember(
+        brightnessFraction,
+        brightnessFloat,
+        brightnessInt,
+        displayCalibration,
+        panelRange
+    ) {
+        val rawBrightness = if (brightnessFloat >= 0f) brightnessFloat else brightnessInt.toFloat()
         RootHelper.resolveScreenNits(
             fraction = brightnessFraction,
             calibration = displayCalibration,
             fallbackMinNit = panelRange.first,
-            fallbackMaxNit = panelRange.second
+            fallbackMaxNit = panelRange.second,
+            rawBrightness = rawBrightness
         )
     }
 
@@ -418,6 +419,7 @@ fun LightSensorsCard(
                 isExactCalibration = isExactCalibration,
                 hasRealCalibration = displayCalibration?.hasRealCalibration == true,
                 minNit = panelRange.first,
+                normalMaxNit = displayCalibration?.normalMaxNit,
                 maxNit = panelRange.second
             )
 
@@ -501,8 +503,10 @@ private fun ScreenBrightnessRow(
     isExactCalibration: Boolean,
     hasRealCalibration: Boolean,
     minNit: Float,
+    normalMaxNit: Float?,
     maxNit: Float
 ) {
+    val isHbmBoost = fraction > 1.01f
     val pct = if (fraction >= 0f) (fraction * 100f).roundToInt().coerceIn(0, 100) else -1
     val progress = if (fraction >= 0f) fraction.coerceIn(0f, 1f) else 0f
 
@@ -514,7 +518,11 @@ private fun ScreenBrightnessRow(
             String.format(Locale.US, "%.1f", resolvedNits)
         }
         val prefix = if (isExactCalibration) "" else "~"
-        if (pct >= 0) "$pct% ($prefix$nitsText $nitUnit)" else "$prefix$nitsText $nitUnit"
+        when {
+            pct >= 0 && isHbmBoost -> "100% HBM ($prefix$nitsText $nitUnit)"
+            pct >= 0 -> "$pct% ($prefix$nitsText $nitUnit)"
+            else -> "$prefix$nitsText $nitUnit"
+        }
     } else {
         stringResource(R.string.sensors_waiting)
     }
@@ -561,12 +569,17 @@ private fun ScreenBrightnessRow(
             trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
         )
 
-        Text(
-            text = if (isExactCalibration || hasRealCalibration) {
+        val rangeText = when {
+            (isExactCalibration || hasRealCalibration) && normalMaxNit != null && maxNit > normalMaxNit + 50f ->
+                stringResource(R.string.panel_range_calibrated_hbm, minNit, normalMaxNit, maxNit)
+            isExactCalibration || hasRealCalibration ->
                 stringResource(R.string.panel_range_calibrated, minNit, maxNit)
-            } else {
+            else ->
                 stringResource(R.string.panel_range_uncalibrated, maxNit)
-            },
+        }
+
+        Text(
+            text = rangeText,
             style = MaterialTheme.typography.labelSmall,
             fontSize = 10.sp,
             fontFamily = FontFamily.Monospace,

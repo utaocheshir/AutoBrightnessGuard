@@ -70,6 +70,7 @@ import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -119,6 +120,7 @@ import com.banoku.oplus.autobrightness.util.UpdateResult
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -152,6 +154,7 @@ fun MainAppScreen() {
     }
     var displayCalibration by remember { mutableStateOf<DisplayCalibration?>(null) }
     var isRefreshingStatus by remember { mutableStateOf(false) }
+    var isRootAvailable by remember { mutableStateOf(RootHelper.isRootAvailable()) }
     val scope = rememberCoroutineScope()
 
     fun cacheStockCurve(curve: List<Float>) {
@@ -177,7 +180,9 @@ fun MainAppScreen() {
     }
 
     suspend fun refreshCalibrationAndStock(foundStockInTail: Boolean) {
-        if (!RootHelper.isRootAvailable()) return
+        val hasRoot = isRootAvailable || RootHelper.checkRootAccess()
+        isRootAvailable = hasRoot
+        if (!hasRoot) return
         val cal = RootHelper.readLiveDisplayCalibration()
         displayCalibration = cal
         if (!foundStockInTail) {
@@ -192,6 +197,7 @@ fun MainAppScreen() {
     fun refreshRuntimeState() {
         scope.launch {
             isRefreshingStatus = true
+            isRootAvailable = RootHelper.checkRootAccess() || RootHelper.isRootAvailable()
             val logs = RootHelper.readModuleLogs()
             val foundStock = applyLogsToRuntimeState(logs)
             refreshCalibrationAndStock(foundStock)
@@ -202,7 +208,9 @@ fun MainAppScreen() {
     // Silent background checks on launch + ensure custom curve persists if enabled
     LaunchedEffect(Unit) {
         scope.launch {
-            if (RootHelper.isRootAvailable()) {
+            val hasRoot = RootHelper.checkRootAccess() || RootHelper.isRootAvailable()
+            isRootAvailable = hasRoot
+            if (hasRoot) {
                 val savedCurve = prefs.getString("pref_curve_config", "").orEmpty()
                 if (savedCurve.startsWith("1:")) {
                     val currentProp = RootHelper.getSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, "")
@@ -282,13 +290,16 @@ fun MainAppScreen() {
                 updateState = updateState,
                 stats = stats,
                 moduleStatus = moduleStatus,
+                isRoot = isRootAvailable,
                 isRefreshingStatus = isRefreshingStatus,
                 stockCurveNits = stockCurveNits,
                 displayCalibration = displayCalibration,
                 onRefreshRuntime = { refreshRuntimeState() },
                 onRefreshCalibration = {
                     scope.launch {
-                        if (RootHelper.isRootAvailable()) {
+                        val hasRoot = isRootAvailable || RootHelper.checkRootAccess()
+                        isRootAvailable = hasRoot
+                        if (hasRoot) {
                             displayCalibration = RootHelper.readLiveDisplayCalibration()
                         }
                     }
@@ -304,6 +315,7 @@ fun MainAppScreen() {
                 modifier = Modifier.padding(innerPadding),
                 updateState = updateState,
                 isCheckingUpdate = isCheckingUpdate,
+                isRoot = isRootAvailable,
                 onCheckUpdate = {
                     scope.launch {
                         isCheckingUpdate = true
@@ -327,6 +339,7 @@ fun OverviewTabContent(
     updateState: UpdateResult?,
     stats: GuardStats,
     moduleStatus: ModuleRuntimeStatus,
+    isRoot: Boolean,
     isRefreshingStatus: Boolean,
     stockCurveNits: List<Float>?,
     displayCalibration: DisplayCalibration?,
@@ -339,7 +352,6 @@ fun OverviewTabContent(
     var liveScreenNit by remember { mutableStateOf<Float?>(null) }
     var hooksExpanded by remember { mutableStateOf(false) }
     val compInfo = remember { DeviceCompatibility.getCompatibilitySummary() }
-    val isRoot = remember { RootHelper.isRootAvailable() }
 
     LazyColumn(
         modifier = modifier
@@ -786,7 +798,7 @@ fun OverviewTabContent(
                                     PackageManager.DONT_KILL_APP
                                 )
                                 val msg = if (newState) {
-                                    "Иконка скрыта. Открыть можно через менеджер LSPosed"
+                                    "Иконка скрыта. Открыть можно через менеджер LSPosed / Vector"
                                 } else {
                                     "Иконка снова доступна в лаунчере"
                                 }
@@ -847,7 +859,7 @@ private fun HeaderHero() {
                 color = Color(0xFFFFC107).copy(alpha = 0.2f)
             ) {
                 Text(
-                    text = "v1.4.4",
+                    text = "v${BuildConfig.VERSION_NAME}",
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
@@ -888,8 +900,25 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
 
     // ColorOS 17 / OxygenOS 17 verified toggles & sliders
     var stabilityGuard by remember { mutableStateOf(prefs.getBoolean("pref_stability_guard", true)) }
-    var minFloor by remember { mutableStateOf(prefs.getBoolean("pref_min_floor", true)) }
-    var customMinNit by remember { mutableFloatStateOf(prefs.getFloat("pref_custom_min_nit", 12.0f)) }
+    var floorMode by remember {
+        val saved = prefs.getString("pref_floor_mode", null)
+        val initial = when (saved) {
+            "off", "auto", "custom" -> saved
+            else -> {
+                val legacyAuto = prefs.getBoolean("pref_min_floor", true)
+                val legacyCustom = prefs.getFloat("pref_custom_min_nit", 12.0f)
+                when {
+                    legacyAuto -> "auto"
+                    legacyCustom >= 0.5f -> "custom"
+                    else -> "off"
+                }
+            }
+        }
+        mutableStateOf(initial)
+    }
+    var customMinNit by remember {
+        mutableFloatStateOf(prefs.getFloat("pref_custom_min_nit", 12.0f).coerceIn(1f, 150f))
+    }
     var debounceLock by remember { mutableStateOf(prefs.getBoolean("pref_debounce_lock", true)) }
     var hysteresisScale by remember {
         mutableFloatStateOf(prefs.getFloat("pref_hysteresis_scale", BrightnessMath.DEFAULT_HYSTERESIS_SCALE))
@@ -991,65 +1020,106 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
             )
         }
 
-        // Interactive Night Minimum Toggle + Unconditional Manual Minimum Slider when OFF
+        // Intuitive 3-Mode Minimum Brightness & DarkEnv Guard Card (Off / Auto 8.5 nits / Custom Slider)
         item {
+            val modeOptions = listOf(
+                Triple("off", stringResource(R.string.floor_mode_off), "floor_mode_off"),
+                Triple("auto", stringResource(R.string.floor_mode_auto), "floor_mode_auto"),
+                Triple("custom", stringResource(R.string.floor_mode_custom), "floor_mode_custom")
+            )
+
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("floor_mode_card"),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.pref_floor_card_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    OsCompatibilityBadge(stringResource(R.string.os_tag_17_verified))
+                    Text(
+                        text = stringResource(R.string.pref_floor_card_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    )
+
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.pref_min_floor_title),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-                                OsCompatibilityBadge(stringResource(R.string.os_tag_17_verified))
+                        modeOptions.forEach { (modeKey, modeLabel, modeTag) ->
+                            val selected = floorMode == modeKey
+                            val accentColor = when (modeKey) {
+                                "auto" -> Color(0xFF10B981)
+                                "custom" -> Color(0xFFFFC107)
+                                else -> Color(0xFF94A3B8)
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = stringResource(R.string.pref_min_floor_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Switch(
-                            checked = minFloor,
-                            onCheckedChange = { newState ->
-                                minFloor = newState
-                                prefs.edit().putBoolean("pref_min_floor", newState).apply()
-                                scope.launch {
-                                    RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, newState)
-                                    val customStr = if (!newState) {
-                                        String.format(Locale.US, "%.1f", customMinNit)
-                                    } else {
-                                        "0"
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        floorMode = modeKey
+                                        val isAuto = modeKey == "auto"
+                                        val effectiveCustom = if (modeKey == "custom") {
+                                            customMinNit.coerceIn(1f, 150f)
+                                        } else {
+                                            0f
+                                        }
+                                        prefs.edit()
+                                            .putString("pref_floor_mode", modeKey)
+                                            .putBoolean("pref_min_floor", isAuto)
+                                            .apply()
+                                        scope.launch {
+                                            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, isAuto)
+                                            val propStr = if (effectiveCustom >= 0.5f) {
+                                                String.format(Locale.US, "%.1f", effectiveCustom)
+                                            } else {
+                                                "0"
+                                            }
+                                            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, propStr)
+                                        }
+                                        Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                                     }
-                                    RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, customStr)
+                                    .testTag(modeTag),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (selected) accentColor.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = if (selected) 1.5.dp else 1.dp,
+                                    color = if (selected) accentColor else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                                )
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 6.dp, vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = modeLabel,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
-                                Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.testTag("switch_min_floor")
-                        )
+                            }
+                        }
                     }
 
-                    AnimatedVisibility(visible = !minFloor) {
+                    AnimatedVisibility(visible = floorMode == "custom") {
                         Column(
-                            modifier = Modifier.padding(top = 12.dp),
+                            modifier = Modifier.padding(top = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
@@ -1066,30 +1136,33 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
                             )
                             Text(
-                                text = if (customMinNit < 0.5f) {
-                                    stringResource(R.string.pref_custom_floor_off)
-                                } else {
-                                    String.format(stringResource(R.string.pref_custom_floor_value), customMinNit)
-                                },
+                                text = String.format(stringResource(R.string.pref_custom_floor_value), customMinNit),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
-                                color = if (customMinNit < 0.5f) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF34D399)
+                                color = Color(0xFF34D399)
                             )
                             Slider(
                                 value = customMinNit,
                                 onValueChange = { rawVal ->
-                                    customMinNit = (rawVal * 2f).roundToInt() / 2f
+                                    customMinNit = ((rawVal * 2f).roundToInt() / 2f).coerceIn(1f, 150f)
                                 },
                                 onValueChangeFinished = {
-                                    prefs.edit().putFloat("pref_custom_min_nit", customMinNit).apply()
-                                    val propVal = if (customMinNit < 0.5f) "0" else String.format(Locale.US, "%.1f", customMinNit)
+                                    val clamped = customMinNit.coerceIn(1f, 150f)
+                                    customMinNit = clamped
+                                    prefs.edit()
+                                        .putString("pref_floor_mode", "custom")
+                                        .putBoolean("pref_min_floor", false)
+                                        .putFloat("pref_custom_min_nit", clamped)
+                                        .apply()
+                                    val propVal = String.format(Locale.US, "%.1f", clamped)
                                     scope.launch {
+                                        RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, false)
                                         RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, propVal)
                                     }
                                     Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                                 },
-                                valueRange = 0f..150f,
+                                valueRange = 1f..150f,
                                 modifier = Modifier.testTag("slider_custom_min_nit")
                             )
                         }
@@ -1109,18 +1182,12 @@ fun SettingsTabContent(modifier: Modifier = Modifier) {
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.pref_hysteresis_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        OsCompatibilityBadge(stringResource(R.string.os_tag_16_17))
-                    }
+                    Text(
+                        text = stringResource(R.string.pref_hysteresis_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    OsCompatibilityBadge(stringResource(R.string.os_tag_16_17))
                     Text(
                         text = stringResource(R.string.pref_hysteresis_desc),
                         style = MaterialTheme.typography.bodySmall,
@@ -1397,19 +1464,14 @@ fun SettingSwitchCard(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    if (!osBadge.isNullOrBlank()) {
-                        OsCompatibilityBadge(osBadge)
-                    }
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                if (!osBadge.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OsCompatibilityBadge(osBadge)
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -1675,6 +1737,7 @@ fun ToolsTabContent(
     modifier: Modifier = Modifier,
     updateState: UpdateResult?,
     isCheckingUpdate: Boolean,
+    isRoot: Boolean,
     onCheckUpdate: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1785,7 +1848,7 @@ fun ToolsTabContent(
                         }
                         null -> {
                             Text(
-                                text = "Текущая версия: v1.4.4",
+                                text = "Текущая версия: v${BuildConfig.VERSION_NAME}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1877,7 +1940,7 @@ fun ToolsTabContent(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "LSPosed Manager",
+                            text = "LSPosed / Vector Manager",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -1909,25 +1972,25 @@ fun ToolsTabContent(
 
         item {
             CommandCard(
-                title = "1. Самый свежий лог LSPosed",
-                desc = "Читает последний файл журнала LSPosed с точным списком заблокированных вызовов.",
-                command = "su -c \"cat \\$(ls -t /data/adb/lspd/log/modules_*.log 2>/dev/null | head -n 1) | grep -i AutoBrightnessGuard\""
+                title = "1. Самый свежий лог LSPosed / Vector",
+                desc = "Читает последний файл журнала LSPosed или Vector с точным списком срабатываний и хуков.",
+                command = "su -c 'f=\$(ls -t /data/adb/vector/log/modules*.log /data/adb/lspd/log/modules*.log 2>/dev/null | head -n 1); [ -n \"\$f\" ] && grep -i AutoBrightnessGuard \"\$f\"'"
             )
         }
 
         item {
             CommandCard(
                 title = "2. Лог через logcat (все буферы)",
-                desc = "Читает все системные буферы logcat, включая system_server.",
-                command = "su -c \"logcat -d -b all -s AutoBrightnessGuard:V\""
+                desc = "Читает все системные буферы logcat, включая system_server и журналы фреймворка.",
+                command = "su -c \"logcat -d -b all | grep -i AutoBrightnessGuard\""
             )
         }
 
         item {
             CommandCard(
-                title = "3. Состояние контроллера яркости (полный дамп)",
-                desc = "Дамп параметров службы OplusAutomaticBrightnessController (с выводом 25 строк состояния).",
-                command = "su -c \"dumpsys display | grep -A 25 -i OplusAutomaticBrightnessController\""
+                title = "3. Состояние контроллера яркости и калибровки",
+                desc = "Дамп таблицы BrightnessModel и контроллера OplusAutomaticBrightnessController (ColorOS 12–17).",
+                command = "su -c \"dumpsys display | grep -E -A 30 -i 'BrightnessModel|OplusAutomaticBrightnessController'\""
             )
         }
 
@@ -1981,13 +2044,13 @@ fun ToolsTabContent(
                             val comp = DeviceCompatibility.getCompatibilitySummary()
                             val report = buildString {
                                 appendLine("=== Auto Brightness Guard Diagnostic Report ===")
-                                appendLine("Module Version: 1.4.4 (LibXposed API 102)")
+                                appendLine("Module Version: ${BuildConfig.VERSION_NAME} (LibXposed API 102)")
                                 appendLine("Device: ${comp.deviceModel} (${comp.deviceCodename})")
                                 appendLine("ROM: ${comp.romVersion}")
                                 appendLine("Build: ${comp.buildDisplayId}")
                                 appendLine("OS: ${comp.androidVersion}")
                                 appendLine("Fingerprint: ${comp.fingerprint}")
-                                appendLine("Root Status: ${if (RootHelper.isRootAvailable()) "Available" else "Not detected"}")
+                                appendLine("Root Status: ${if (isRoot) "Available" else "Not detected"}")
                                 appendLine("Package: com.banoku.oplus.autobrightness")
                                 appendLine("Controller: com.android.server.display.OplusAutomaticBrightnessController")
                                 appendLine("Ambient: com.android.server.display.feature.ambience.OplusBrightnessAmbientAdapter")
@@ -2019,9 +2082,17 @@ fun ToolsTabContent(
 @Composable
 fun UpdateBannerCard(info: ReleaseInfo) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val targetFileName = remember(info.version) { "AutoBrightnessGuard-${info.version}.apk" }
+    var isDownloading by remember(info.version) { mutableStateOf(false) }
+    var downloadProgress by remember(info.version) { mutableStateOf<Int?>(null) }
+    var downloadedApkFile by remember(info.version) {
+        val existing = File(File(context.cacheDir, "updates"), targetFileName)
+        mutableStateOf(if (existing.exists() && existing.length() > 1024L) existing else null)
+    }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("update_banner_card"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E3A8A).copy(alpha = 0.3f)),
         border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF38BDF8)))
@@ -2060,21 +2131,98 @@ fun UpdateBannerCard(info: ReleaseInfo) {
                 color = Color(0xFFE2E8F0)
             )
 
+            if (isDownloading) {
+                val pct = downloadProgress
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (pct != null && pct in 0..100) {
+                        LinearProgressIndicator(
+                            progress = { pct / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Color(0xFF38BDF8),
+                            trackColor = Color(0xFF0F172A)
+                        )
+                        Text(
+                            text = String.format(stringResource(R.string.downloading_apk_pct), pct),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFBAE6FD)
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Color(0xFF38BDF8),
+                            trackColor = Color(0xFF0F172A)
+                        )
+                        Text(
+                            text = stringResource(R.string.downloading_apk_indet),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFBAE6FD)
+                        )
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (info.apkUrl != null) {
-                    ElevatedButton(
-                        onClick = {
-                            UpdateChecker.downloadApk(context, info.apkUrl, "AutoBrightnessGuard-${info.version}.apk")
-                            Toast.makeText(context, "Начата загрузка APK в Загрузки", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(stringResource(R.string.download_apk))
+                    val readyFile = downloadedApkFile
+                    if (readyFile != null && readyFile.exists() && !isDownloading) {
+                        ElevatedButton(
+                            onClick = {
+                                if (!UpdateChecker.installApkFile(context, readyFile) && !readyFile.exists()) {
+                                    downloadedApkFile = null
+                                }
+                            },
+                            modifier = Modifier.weight(1f).testTag("install_apk_button"),
+                            colors = ButtonDefaults.elevatedButtonColors(
+                                containerColor = Color(0xFF065F46),
+                                contentColor = Color(0xFFECFDF5)
+                            )
+                        ) {
+                            Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(stringResource(R.string.install_apk))
+                        }
+                    } else {
+                        ElevatedButton(
+                            onClick = {
+                                if (!isDownloading) {
+                                    isDownloading = true
+                                    downloadProgress = 0
+                                    scope.launch {
+                                        val file = UpdateChecker.downloadApkWithProgress(
+                                            context = context,
+                                            downloadUrl = info.apkUrl,
+                                            fileName = targetFileName
+                                        ) { pct ->
+                                            downloadProgress = pct
+                                        }
+                                        isDownloading = false
+                                        if (file != null) {
+                                            downloadedApkFile = file
+                                            UpdateChecker.installApkFile(context, file)
+                                        } else {
+                                            Toast.makeText(
+                                                context,
+                                                "Ошибка загрузки. Открытие страницы релиза…",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            UpdateChecker.openInBrowser(context, info.htmlUrl)
+                                        }
+                                    }
+                                }
+                            },
+                            enabled = !isDownloading,
+                            modifier = Modifier.weight(1f).testTag("download_apk_button")
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(stringResource(R.string.download_apk))
+                        }
                     }
                 }
 
@@ -2189,8 +2337,8 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         item {
             FaqItem(
                 id = 0,
-                question = "Что нового в версии 1.4.4?",
-                answer = "1. Отключаемый подэкранный датчик PWM (tcs3720 / high_pwm_rgb): теперь на карточке датчиков кнопка ВКЛ/ВЫКЛ есть для всех трёх сенсоров (MAIN, AUX и PWM), а новый перехватчик [10/10] в system_server подавляет события подэкранного датчика на лету без перезагрузки.\n2. Точная калибровка яркости экрана в нитах: убран конфликт шкал 255/4095 и потолок HDR 500 нит — теперь модуль читает реальную аппаратную таблицу панели (mBacklightToNitsSpline / mSpline) и текущие ниты из dumpsys display, синхронизируя карточку датчиков и график кривой.\n3. Компактный раздел «Справка»: карточка «История версий (Changelog)» теперь сворачивается и по умолчанию скрыта.",
+                question = "Что нового в версии 1.4.5?",
+                answer = "1. Точная калибровка дисплеев ColorOS 17 (OnePlus 13 и аналоги): чтение 3-элементного сплайна BrightnessModel, корректное отображение текущей яркости по шкале mMinBrightness..mMaxBrightness (6..4095), поддержка пиковой яркости HBM (mMaxPanelBrightness, до 1800–2000 нит).\n2. Универсальная поддержка Root и LSPosed / Vector Framework: проверка прав root через реальный вызов `su -c id -u` (Magisk Alpha/Kitsune, BakaSU, KernelSU, APatch), чтение журналов из /data/adb/vector/log и /data/adb/lspd/log, исправленный парсинг первых строк хуков в logcat и универсальный запуск менеджера.\n3. Автоустановщик обновлений: кнопка «Скачать APK» теперь скачивает файл прямо с индикатором % и сразу запускает системный установщик (кнопка «Установить APK» остаётся на карточке).\n4. Удобная настройка ночного минимума и DarkEnv Guard: 3 наглядных режима («Выкл (сток)», «Авто 8.5 нит», «Свой» ползунок 1–150 нит) + аккуратное вертикальное выравнивание меток совместимости ОС.",
                 isExpanded = expandedFaq == 0,
                 onToggle = { expandedFaq = if (expandedFaq == 0) null else 0 }
             )
@@ -2251,7 +2399,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (changelogExpanded) "Скрыть список изменений" else "Нажмите, чтобы раскрыть (1.1 – 1.4.4)",
+                                text = if (changelogExpanded) "Скрыть список изменений" else "Нажмите, чтобы раскрыть (1.1 – 1.4.5)",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                             )
@@ -2271,10 +2419,26 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(
-                                    text = "Версия 1.4.4 (Текущая — PWM-переключатель, Яркость в нитах и Компактный UI)",
+                                    text = "Версия 1.4.5 (Текущая — Vector / BakaSU, ColorOS 17 HBM, Автоустановщик и UI)",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF10B981)
+                                )
+                                Text(
+                                    text = "• Универсальная поддержка Root (Magisk / KernelSU / BakaSU SuSFS / APatch) через `su -c id -u` + полная совместимость с Vector Framework (/data/adb/vector/log) и LSPosed.\n• Исправлен парсинг первых хуков в logcat и загрузка истории хуков на большом аптайме; обновлены терминальные команды во вкладке Инструменты.\n• Полная калибровка ColorOS 17 BrightnessModel (6..4095, mNormalMaxNit и пик HBM до 2000 нит).\n• Встроенный загрузчик APK с прогрессом % и автоматическим запуском системного установщика.\n• Понятный 3-режимный выбор ночного минимума (Выкл / Авто 8.5 / Свой) + вертикальное выравнивание бейджей ОС в Настройках.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Версия 1.4.4 (PWM-переключатель, Яркость в нитах и Компактный UI)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
                                 )
                                 Text(
                                     text = "• Отключаемый подэкранный датчик PWM (tcs3720 / high_pwm_rgb): добавлена кнопка ВКЛ/ВЫКЛ и хук [10/10] в SystemSensorManager\$SensorEventQueue.\n• Точные ниты из системы: убран конфликт 255/4095 и ложный лимит 500 нит (HDR Average) — яркость и диапазон панели читаются из аппаратных сплайнов dumpsys display и синхронизированы между карточкой датчиков и графиком.\n• Карточка «История версий (Changelog)» сделана сворачивающейся (свёрнута по умолчанию).",
@@ -2416,7 +2580,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Автор модуля: Banoku\nВерсия: 1.4.4\nAPI: LibXposed 102.0.0 (LSPosed)",
+                        text = "Автор модуля: Banoku\nВерсия: ${BuildConfig.VERSION_NAME}\nAPI: LibXposed 102.0.0 (LSPosed / Vector)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

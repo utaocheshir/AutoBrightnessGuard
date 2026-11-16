@@ -44,6 +44,10 @@
     <string name="update_available">Доступне оновлення</string>
     <string name="up_to_date">У вас встановлена актуальна версія</string>
     <string name="download_apk">Завантажити APK</string>
+    <string name="install_apk">Встановити APK</string>
+    <string name="downloading_apk_pct">Завантаження: %d%%</string>
+    <string name="downloading_apk_indet">Завантаження APK…</string>
+    <string name="install_permission_needed">Дозвольте встановлення з цього джерела і натисніть «Встановити APK»</string>
     <string name="view_release">Відкрити на GitHub</string>
     <string name="pref_language_title">Мова додатка</string>
     <string name="pref_language_desc">Оберіть мову інтерфейсу додатка</string>
@@ -79,8 +83,13 @@
     <string name="curve_reset">Скинути</string>
     <string name="unit_nits">ніт</string>
 
+    <string name="pref_floor_card_title">Мінімальна яскравість і DarkEnv Guard</string>
+    <string name="pref_floor_card_desc">Оберіть режим захисту в темряві: Вимк (як у стоці), Авто 8.5 ніт (для автояскравості + DarkEnv Guard) або Власний безумовний мінімум повзунком (+ DarkEnv Guard).</string>
+    <string name="floor_mode_off">Вимк (сток)</string>
+    <string name="floor_mode_auto">Авто 8.5 ніт</string>
+    <string name="floor_mode_custom">Власний</string>
     <string name="pref_custom_floor_title">Ручний безумовний мінімум</string>
-    <string name="pref_custom_floor_desc">Коли нічний мінімум 8.5 ніт вимкнено: підсвітка НЕ опуститься нижче цього порогу (0–150 ніт) за жодних умов, поки екран увімкнений.</string>
+    <string name="pref_custom_floor_desc">Підсвітка НЕ опуститься нижче цього порогу (1–150 ніт) у жодному режимі та додатку, поки екран увімкнений.</string>
     <string name="pref_custom_floor_off">Вимк (поріг прошивки)</string>
     <string name="pref_custom_floor_value">Поріг: %.1f ніт (безумовно)</string>
 
@@ -115,6 +124,7 @@
     <string name="os_tag_17_verified">ColorOS 17 (і 16*)</string>
     <string name="os_tag_universal">Усі 12–17</string>
     <string name="panel_range_calibrated">Панель: %.1f–%.0f ніт (дані системи)</string>
+    <string name="panel_range_calibrated_hbm">Панель: %.1f–%.0f ніт (HBM до %.0f)</string>
     <string name="panel_range_uncalibrated">Оцінка до %.0f ніт (немає калібрування su)</string>
     <string name="curve_screen_now">Екран: %1$s %2$s</string>
 </resources>
