@@ -63,6 +63,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
 import com.banoku.oplus.autobrightness.R
+import com.banoku.oplus.autobrightness.ui.theme.AppTheme
 import com.banoku.oplus.autobrightness.util.DisplayCalibration
 import com.banoku.oplus.autobrightness.util.RootHelper
 import com.banoku.oplus.autobrightness.util.XposedBridgeClient
@@ -144,6 +145,7 @@ fun LightSensorsCard(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    val colors = AppTheme.colors
 
     val sensorManager = remember(context) {
         context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
@@ -385,7 +387,7 @@ fun LightSensorsCard(
                     Icon(
                         imageVector = Icons.Default.Sensors,
                         contentDescription = null,
-                        tint = Color(0xFFFFC107),
+                        tint = colors.accentAmber,
                         modifier = Modifier.size(22.dp)
                     )
                     Text(
@@ -397,14 +399,14 @@ fun LightSensorsCard(
 
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF10B981).copy(alpha = 0.16f)
+                    color = colors.accentGreen.copy(alpha = if (colors.isDark) 0.16f else 0.12f)
                 ) {
                     Text(
                         text = stringResource(R.string.sensors_eco_badge),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF34D399),
+                        color = colors.accentGreen,
                         maxLines = 1,
                         softWrap = false
                     )
@@ -519,6 +521,7 @@ private fun ScreenBrightnessRow(
     normalMaxNit: Float?,
     maxNit: Float
 ) {
+    val colors = AppTheme.colors
     val isHbmBoost = fraction > 1.01f
     val pct = if (fraction >= 0f) (fraction * 100f).roundToInt().coerceIn(0, 100) else -1
     val progress = if (fraction >= 0f) fraction.coerceIn(0f, 1f) else 0f
@@ -553,7 +556,7 @@ private fun ScreenBrightnessRow(
                 Icon(
                     imageVector = Icons.Default.Brightness6,
                     contentDescription = null,
-                    tint = Color(0xFF38BDF8),
+                    tint = colors.accentCyan,
                     modifier = Modifier.size(18.dp)
                 )
                 Text(
@@ -568,7 +571,7 @@ private fun ScreenBrightnessRow(
                 style = MaterialTheme.typography.bodyMedium,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF38BDF8)
+                color = colors.accentCyan
             )
         }
 
@@ -578,7 +581,7 @@ private fun ScreenBrightnessRow(
                 .fillMaxWidth()
                 .height(5.dp)
                 .clip(RoundedCornerShape(3.dp)),
-            color = Color(0xFF38BDF8),
+            color = colors.accentCyan,
             trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
         )
 
@@ -609,6 +612,7 @@ private fun SensorReadingRow(
     canToggle: Boolean,
     onToggleSensor: () -> Unit
 ) {
+    val colors = AppTheme.colors
     val normalizedProgress = if (lux != null && lux > 0f && isSensorEnabled) {
         (ln(1f + lux) / ln(10001f)).coerceIn(0f, 1f)
     } else {
@@ -617,9 +621,9 @@ private fun SensorReadingRow(
 
     val roleColor = when {
         !isSensorEnabled -> MaterialTheme.colorScheme.outline
-        item.role == SensorRole.MAIN -> Color(0xFF10B981)
-        item.role == SensorRole.AUX -> Color(0xFFF59E0B)
-        else -> Color(0xFF38BDF8)
+        item.role == SensorRole.MAIN -> colors.accentGreen
+        item.role == SensorRole.AUX -> colors.accentAmber
+        else -> colors.accentCyan
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -687,13 +691,10 @@ private fun SensorReadingRow(
                 )
 
                 if (canToggle) {
+                    val toggleColor = if (isSensorEnabled) colors.accentGreen else colors.accentRed
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (isSensorEnabled) {
-                            Color(0xFF10B981).copy(alpha = 0.2f)
-                        } else {
-                            Color(0xFFEF4444).copy(alpha = 0.2f)
-                        },
+                        color = toggleColor.copy(alpha = if (colors.isDark) 0.2f else 0.13f),
                         modifier = Modifier
                             .defaultMinSize(minWidth = 48.dp)
                             .clip(RoundedCornerShape(8.dp))
@@ -709,20 +710,20 @@ private fun SensorReadingRow(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = if (isSensorEnabled) Color(0xFF34D399) else Color(0xFFF87171)
+                            color = toggleColor
                         )
                     }
                 } else {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF38BDF8).copy(alpha = 0.14f)
+                        color = colors.accentCyan.copy(alpha = 0.14f)
                     ) {
                         Text(
                             text = stringResource(R.string.sensor_monitor_badge),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Medium,
-                            color = Color(0xFF38BDF8)
+                            color = colors.accentCyan
                         )
                     }
                 }

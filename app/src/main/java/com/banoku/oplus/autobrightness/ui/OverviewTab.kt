@@ -61,14 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.banoku.oplus.autobrightness.BuildConfig
 import com.banoku.oplus.autobrightness.R
-import com.banoku.oplus.autobrightness.ui.theme.AccentGreen
-import com.banoku.oplus.autobrightness.ui.theme.AccentGreenBright
-import com.banoku.oplus.autobrightness.ui.theme.AccentRed
-import com.banoku.oplus.autobrightness.ui.theme.AccentRedBright
-import com.banoku.oplus.autobrightness.ui.theme.CardHeroNavy
-import com.banoku.oplus.autobrightness.ui.theme.SkyCyan
-import com.banoku.oplus.autobrightness.ui.theme.SunAmber
-import com.banoku.oplus.autobrightness.ui.theme.SunGold
+import com.banoku.oplus.autobrightness.ui.theme.AppTheme
 import com.banoku.oplus.autobrightness.util.DisplayCalibration
 import com.banoku.oplus.autobrightness.util.GuardStats
 import com.banoku.oplus.autobrightness.util.HookState
@@ -96,6 +89,7 @@ fun OverviewTabContent(
     var primaryLux by remember { mutableStateOf<Float?>(null) }
     var liveScreenNit by remember { mutableStateOf<Float?>(null) }
     var hooksExpanded by remember { mutableStateOf(false) }
+    val colors = AppTheme.colors
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -125,14 +119,14 @@ fun OverviewTabContent(
             // Unified Module Status + Active Protection Telemetry Card
             item {
                 val statusHeaderColor = when {
-                    moduleStatus.isVersionMismatch -> SunAmber
-                    moduleStatus.moduleDetected && moduleStatus.installedCount == moduleStatus.totalCount -> AccentGreen
-                    moduleStatus.moduleDetected -> SunAmber
-                    xposedState.isConnected && xposedState.hasSystemScope && !isRoot -> SunAmber
-                    xposedState.isConnected && xposedState.hasSystemScope && isRoot && isRefreshingStatus -> SunAmber
-                    xposedState.isConnected && xposedState.hasSystemScope && isRoot -> AccentRed
-                    !isRoot && !xposedState.isConnected -> SunAmber
-                    else -> AccentRed
+                    moduleStatus.isVersionMismatch -> colors.accentAmber
+                    moduleStatus.moduleDetected && moduleStatus.installedCount == moduleStatus.totalCount -> colors.accentGreen
+                    moduleStatus.moduleDetected -> colors.accentAmber
+                    xposedState.isConnected && xposedState.hasSystemScope && !isRoot -> colors.accentAmber
+                    xposedState.isConnected && xposedState.hasSystemScope && isRoot && isRefreshingStatus -> colors.accentAmber
+                    xposedState.isConnected && xposedState.hasSystemScope && isRoot -> colors.accentRed
+                    !isRoot && !xposedState.isConnected -> colors.accentAmber
+                    else -> colors.accentRed
                 }
 
                 val statusHeaderIcon = when {
@@ -185,8 +179,8 @@ fun OverviewTabContent(
                         .fillMaxWidth()
                         .testTag("status_card"),
                     shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = CardHeroNavy),
-                    border = BorderStroke(1.dp, SkyCyan.copy(alpha = 0.35f))
+                    colors = CardDefaults.cardColors(containerColor = colors.heroCardContainer),
+                    border = BorderStroke(1.dp, colors.heroCardBorder)
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
@@ -213,14 +207,14 @@ fun OverviewTabContent(
                                     Text(
                                         text = stringResource(R.string.stats_card_title),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = SkyCyan,
+                                        color = colors.accentCyan,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
                                         text = statusHeaderText,
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFF1F5F9)
+                                        color = colors.heroTitleText
                                     )
                                 }
                             }
@@ -237,7 +231,7 @@ fun OverviewTabContent(
                                     Icon(
                                         imageVector = Icons.Default.Refresh,
                                         contentDescription = stringResource(R.string.refresh_hooks_desc),
-                                        tint = SkyCyan
+                                        tint = colors.accentCyan
                                     )
                                 }
                             }
@@ -246,27 +240,27 @@ fun OverviewTabContent(
                         if (moduleStatus.isVersionMismatch && isRoot) {
                             OutlinedButton(
                                 onClick = onRequestSoftReboot,
-                                border = BorderStroke(1.dp, SunAmber.copy(alpha = 0.6f)),
+                                border = BorderStroke(1.dp, colors.accentAmber.copy(alpha = 0.6f)),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.PowerSettingsNew,
                                     contentDescription = null,
-                                    tint = SunAmber,
+                                    tint = colors.accentAmber,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = stringResource(R.string.soft_reboot_btn),
-                                    color = SunAmber,
+                                    color = colors.accentAmber,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         } else if (isRoot && !moduleStatus.moduleDetected && !isRefreshingStatus) {
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = AccentRed.copy(alpha = 0.14f),
-                                border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.4f)),
+                                color = colors.accentRed.copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, colors.accentRed.copy(alpha = 0.4f)),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(
@@ -276,7 +270,7 @@ fun OverviewTabContent(
                                     Text(
                                         text = stringResource(R.string.status_vector_ksun_hint),
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFFFCA5A5)
+                                        color = if (colors.isDark) Color(0xFFFCA5A5) else colors.accentRed
                                     )
                                     if (frameworkDiagHint.isNotBlank()) {
                                         Text(
@@ -284,7 +278,7 @@ fun OverviewTabContent(
                                             style = MaterialTheme.typography.bodySmall,
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 10.sp,
-                                            color = Color(0xFFCBD5E1)
+                                            color = colors.heroSubtitleText
                                         )
                                     }
                                 }
@@ -301,13 +295,13 @@ fun OverviewTabContent(
                                 Text(
                                     text = stringResource(R.string.scope_label),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF94A3B8)
+                                    color = colors.heroMutedText
                                 )
                                 Text(
                                     text = stringResource(R.string.status_framework),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFFE2E8F0)
+                                    color = colors.heroSubtitleText
                                 )
                             }
 
@@ -319,17 +313,17 @@ fun OverviewTabContent(
                                         } else {
                                             stringResource(R.string.system_scope_missing)
                                         },
-                                        color = if (xposedState.hasSystemScope) AccentGreenBright else AccentRedBright
+                                        color = if (xposedState.hasSystemScope) colors.accentGreen else colors.accentRed
                                     )
                                 }
                                 StatusPill(
                                     text = if (isRoot) stringResource(R.string.root_available) else stringResource(R.string.root_unavailable),
-                                    color = if (isRoot) AccentGreenBright else SunAmber
+                                    color = if (isRoot) colors.accentGreen else colors.accentAmber
                                 )
                             }
                         }
 
-                        HorizontalDivider(color = Color(0xFF1E293B))
+                        HorizontalDivider(color = colors.dividerColor)
 
                         // Active Protection Stats Grid (Always visible & populated cleanly!)
                         Column(
@@ -346,7 +340,7 @@ fun OverviewTabContent(
                                     modifier = Modifier.weight(1f),
                                     title = stringResource(R.string.stats_blocked_label),
                                     value = "${stats.totalBlocked}",
-                                    valueColor = if (stats.totalBlocked > 0) AccentGreenBright else Color(0xFF94A3B8),
+                                    valueColor = if (stats.totalBlocked > 0) colors.accentGreen else colors.heroMutedText,
                                     subtitle = if (stats.lastBlockedTime.isNotBlank()) {
                                         stringResource(R.string.stats_last_blocked, stats.lastBlockedTime)
                                     } else {
@@ -358,7 +352,7 @@ fun OverviewTabContent(
                                     modifier = Modifier.weight(1f),
                                     title = stringResource(R.string.stats_guards_label),
                                     value = "${stats.totalGuardInterventions}",
-                                    valueColor = if (stats.totalGuardInterventions > 0) SkyCyan else Color(0xFF94A3B8),
+                                    valueColor = if (stats.totalGuardInterventions > 0) colors.accentCyan else colors.heroMutedText,
                                     subtitle = if (stats.totalGuardInterventions > 0) {
                                         stringResource(R.string.stats_guards_count, stats.totalGuardInterventions)
                                     } else {
@@ -375,25 +369,25 @@ fun OverviewTabContent(
                                     if (stats.antiDriftCount > 0) {
                                         StatusPill(
                                             text = stringResource(R.string.stats_pill_drift, stats.antiDriftCount),
-                                            color = SkyCyan
+                                            color = colors.accentCyan
                                         )
                                     }
                                     if (stats.floorAndDarkEnvCount > 0) {
                                         StatusPill(
                                             text = stringResource(R.string.stats_pill_floor, stats.floorAndDarkEnvCount),
-                                            color = SunGold
+                                            color = colors.accentAmber
                                         )
                                     }
                                     if (stats.customCurveCount > 0) {
                                         StatusPill(
                                             text = stringResource(R.string.stats_pill_curve, stats.customCurveCount),
-                                            color = AccentGreenBright
+                                            color = colors.accentGreen
                                         )
                                     }
                                     if (stats.stabilityAndSensorsCount > 0) {
                                         StatusPill(
                                             text = stringResource(R.string.stats_pill_stability, stats.stabilityAndSensorsCount),
-                                            color = Color(0xFFA78BFA)
+                                            color = colors.accentPurple
                                         )
                                     }
                                 }
@@ -406,7 +400,8 @@ fun OverviewTabContent(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .clickable { hooksExpanded = !hooksExpanded }
-                                .background(Color(0xFF0A101F))
+                                .background(colors.innerTileContainer)
+                                .border(1.dp, colors.innerTileBorder, RoundedCornerShape(10.dp))
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
@@ -423,18 +418,18 @@ fun OverviewTabContent(
                                     ),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFFE2E8F0)
+                                    color = colors.heroSubtitleText
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     moduleStatus.hooks.forEach { hookItem ->
                                         val pillColor = when (hookItem.state) {
-                                            HookState.INSTALLED -> AccentGreen
-                                            HookState.SKIPPED -> AccentRed
-                                            HookState.UNKNOWN -> Color(0xFF64748B)
+                                            HookState.INSTALLED -> colors.accentGreen
+                                            HookState.SKIPPED -> colors.accentRed
+                                            HookState.UNKNOWN -> colors.heroMutedText
                                         }
                                         Surface(
                                             shape = RoundedCornerShape(4.dp),
-                                            color = pillColor.copy(alpha = 0.22f)
+                                            color = pillColor.copy(alpha = if (colors.isDark) 0.22f else 0.14f)
                                         ) {
                                             Text(
                                                 text = "${hookItem.id}",
@@ -452,7 +447,7 @@ fun OverviewTabContent(
                             Icon(
                                 imageVector = if (hooksExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                                 contentDescription = stringResource(R.string.show_hooks_desc),
-                                tint = Color(0xFF94A3B8)
+                                tint = colors.heroMutedText
                             )
                         }
 
@@ -463,14 +458,14 @@ fun OverviewTabContent(
                                         text = stringResource(R.string.hooks_last_boot, moduleStatus.lastBootTime),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontFamily = FontFamily.Monospace,
-                                        color = Color(0xFF94A3B8)
+                                        color = colors.heroMutedText
                                     )
                                 }
                                 moduleStatus.hooks.forEach { item ->
                                     val itemColor = when (item.state) {
-                                        HookState.INSTALLED -> AccentGreenBright
-                                        HookState.SKIPPED -> AccentRedBright
-                                        HookState.UNKNOWN -> Color(0xFF94A3B8)
+                                        HookState.INSTALLED -> colors.accentGreen
+                                        HookState.SKIPPED -> colors.accentRed
+                                        HookState.UNKNOWN -> colors.heroMutedText
                                     }
                                     val prefix = when (item.state) {
                                         HookState.INSTALLED -> "✓"
@@ -492,7 +487,8 @@ fun OverviewTabContent(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF0A101F).copy(alpha = 0.7f))
+                                            .background(colors.innerTileContainer.copy(alpha = if (colors.isDark) 0.7f else 1f))
+                                            .border(1.dp, colors.innerTileBorder, RoundedCornerShape(8.dp))
                                             .padding(horizontal = 10.dp, vertical = 7.dp)
                                     ) {
                                         Text(
@@ -506,7 +502,7 @@ fun OverviewTabContent(
                                             style = MaterialTheme.typography.bodySmall,
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 11.sp,
-                                            color = Color(0xFFCBD5E1)
+                                            color = colors.heroSubtitleText
                                         )
                                     }
                                 }
@@ -546,6 +542,7 @@ private fun CompactHeaderBar(
     xposedState: XposedBridgeState,
     isRoot: Boolean
 ) {
+    val colors = AppTheme.colors
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -557,14 +554,14 @@ private fun CompactHeaderBar(
             modifier = Modifier
                 .size(46.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF1B2A49))
-                .border(1.5.dp, SunGold.copy(alpha = 0.6f), CircleShape),
+                .background(colors.avatarBg)
+                .border(1.5.dp, colors.accentAmber.copy(alpha = 0.6f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.LightMode,
                 contentDescription = null,
-                tint = SunGold,
+                tint = colors.accentAmber,
                 modifier = Modifier.size(26.dp)
             )
         }
@@ -587,7 +584,7 @@ private fun CompactHeaderBar(
             ) {
                 StatusPill(
                     text = "v${BuildConfig.VERSION_NAME}",
-                    color = SunGold
+                    color = colors.accentAmber
                 )
                 StatusPill(
                     text = if (xposedState.isConnected) {
@@ -595,7 +592,7 @@ private fun CompactHeaderBar(
                     } else {
                         "LibXposed API 102"
                     },
-                    color = SkyCyan
+                    color = colors.accentCyan
                 )
                 val transportLabel = when {
                     xposedState.isConnected && xposedState.supportsRemotePrefs -> {
@@ -612,9 +609,9 @@ private fun CompactHeaderBar(
                     else -> stringResource(R.string.header_ipc_unlinked)
                 }
                 val transportColor = when {
-                    xposedState.isConnected && xposedState.supportsRemotePrefs -> AccentGreenBright
-                    isRoot -> SunAmber
-                    else -> AccentRedBright
+                    xposedState.isConnected && xposedState.supportsRemotePrefs -> colors.accentGreen
+                    isRoot -> colors.accentAmber
+                    else -> colors.accentRed
                 }
                 StatusPill(
                     text = transportLabel,
@@ -633,18 +630,19 @@ private fun StatTile(
     valueColor: Color,
     subtitle: String
 ) {
+    val colors = AppTheme.colors
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF0A101F))
-            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(12.dp))
+            .background(colors.innerTileContainer)
+            .border(1.dp, colors.innerTileBorder, RoundedCornerShape(12.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Text(
             text = title,
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF94A3B8),
+            color = colors.heroMutedText,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -659,7 +657,7 @@ private fun StatTile(
             text = subtitle,
             style = MaterialTheme.typography.labelSmall,
             fontSize = 10.sp,
-            color = Color(0xFFCBD5E1),
+            color = colors.heroSubtitleText,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -671,9 +669,10 @@ private fun StatusPill(
     text: String,
     color: Color
 ) {
+    val alpha = if (AppTheme.colors.isDark) 0.16f else 0.13f
     Surface(
         shape = RoundedCornerShape(8.dp),
-        color = color.copy(alpha = 0.16f)
+        color = color.copy(alpha = alpha)
     ) {
         Text(
             text = text,

@@ -51,11 +51,12 @@ object RootHelper {
         "/su/bin/su"
     )
 
+    const val MODULE_DISK_LOG_PATH = "/data/system/autobrightness_guard.log"
+
     private const val MODULE_LOG_CANDIDATES =
         "/data/adb/lspd/log/modules_*.log /data/adb/lspd/log/verbose_*.log " +
             "/data/adb/lsp/log/modules_*.log /data/adb/lsp/log/verbose_*.log " +
-            "/data/adb/vector/log/modules_*.log /data/adb/vector/log/verbose_*.log " +
-            "/data/adb/lspd/log.old/modules_*.log"
+            "/data/adb/vector/log/modules_*.log /data/adb/vector/log/verbose_*.log"
 
     private const val MODULE_BOOT_PATTERN =
         "AutoBrightnessGuard.*(onModuleLoaded|starting, sdk=|Hook \\[|HOOK_SUMMARY:|STOCK_CURVE:|BLOCKED |GUARD_STATS:)"
@@ -292,20 +293,22 @@ object RootHelper {
     }
 
     /**
-     * Single-pass fast module log reader supporting both:
-     * - Vector Framework 2.2 (XposedInterface.log -> Android logd via `logcat -d -b main -b system -b crash -s AutoBrightnessGuard:V`
-     *   plus `modules_*.log` for `Loaded module com.banoku.oplus.autobrightness`)
-     * - LSPosed / ReLSPosed (`/data/adb/lspd/log/modules_*.log` & `logcat`)
+     * Single-pass fast module log reader supporting:
+     * 1. RAM-independent persistent disk log (/data/system/autobrightness_guard.log) written by module
+     * 2. Vector / LSPosed active manager logs (modules_*.log) for injection status
+     * 3. Live logcat ring buffer (main/system/crash -s AutoBrightnessGuard:V)
      */
     suspend fun readModuleLogs(): List<LogEntry> = withContext(Dispatchers.IO) {
         val singlePassCmd = buildString {
-            // 1. Check Vector/LSPosed module logs (fast small files, skipping huge kmsg.log / props.txt)
-            append("for f in \$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 4); do ")
+            // 1. Module's own persistent disk ring log (survives ColorOS screen-lock logd eviction)
+            append("if [ -r '$MODULE_DISK_LOG_PATH' ]; then tail -n 350 '$MODULE_DISK_LOG_PATH' 2>/dev/null; fi; ")
+            // 2. Current-session Vector/LSPosed module logs (excludes stale log.old boots)
+            append("for f in \$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 3); do ")
             append("if [ -r \"\$f\" ]; then ")
             append("grep -iE '$MODULE_BOOT_PATTERN|Loaded module com\\.banoku\\.oplus\\.autobrightness' \"\$f\" 2>/dev/null | tail -n 60; ")
-            append("grep -i AutoBrightnessGuard \"\$f\" 2>/dev/null | tail -n 150; ")
+            append("grep -i AutoBrightnessGuard \"\$f\" 2>/dev/null | tail -n 120; ")
             append("fi; done; ")
-            // 2. Native tag-filtered logcat (main, system, crash — avoids slow/restricted `-b all`)
+            // 3. Native tag-filtered logcat (main, system, crash)
             append("logcat -d -b main -b system -b crash -s AutoBrightnessGuard:V 2>/dev/null | tail -n 300")
         }
         val result = executeSuCommand(singlePassCmd)
@@ -338,7 +341,7 @@ object RootHelper {
 
     suspend fun readLatestStockCurveFromLogs(): List<Float>? = withContext(Dispatchers.IO) {
         val cmd =
-            "grep -Fh 'STOCK_CURVE:' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 1; " +
+            "grep -Fh 'STOCK_CURVE:' '$MODULE_DISK_LOG_PATH' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 2; " +
                 "logcat -d -b main -b system -b crash -s AutoBrightnessGuard:V 2>/dev/null | grep -F 'STOCK_CURVE:' | tail -n 1"
         val res = executeSuCommand(cmd)
         if (res.output.isNotBlank()) {
@@ -1037,7 +1040,21 @@ object RootHelper {
         val detailMap = mutableMapOf<Int, String>()
         val hitMap = mutableMapOf<Int, Int>()
 
-        // Optional compact HOOK_SUMMARY parser
+        // Optional compact GUARD_STATS embedded hook_mask & ver recovery (immune to boot log eviction)
+        val latestGuardStats = session.lastOrNull { it.message.contains("GUARD_STATS:") }?.message
+        if (latestGuardStats != null) {
+            if (loadedVersion.isEmpty()) {
+                loadedVersion = Regex("ver=([^,\\s]+)").find(latestGuardStats)?.groupValues?.get(1).orEmpty()
+            }
+            val mask = Regex("hook_mask=([01]{10})").find(latestGuardStats)?.groupValues?.get(1)
+            if (mask != null) {
+                for (i in 0 until minOf(mask.length, hookTitles.size)) {
+                    stateMap[i + 1] = if (mask[i] == '1') HookState.INSTALLED else HookState.SKIPPED
+                }
+            }
+        }
+
+        // Optional compact HOOK_SUMMARY parser (overrides mask if present with latest boot state)
         val summaryLine = session.lastOrNull { it.message.contains("HOOK_SUMMARY:") }?.message
         if (summaryLine != null) {
             if (loadedVersion.isEmpty()) {
@@ -1115,7 +1132,7 @@ object RootHelper {
         val hasLoadedInModuleManager = session.any {
             it.message.contains("Loaded module com.banoku.oplus.autobrightness", ignoreCase = true)
         }
-        val detected = startEntry != null || stateMap.isNotEmpty() || hasLoadedInModuleManager
+        val detected = startEntry != null || stateMap.isNotEmpty() || hasLoadedInModuleManager || latestGuardStats != null
         val installedCount = items.count { it.state == HookState.INSTALLED }
         val mismatch = loadedVersion.isNotEmpty() && !loadedVersion.equals(expectedVersion, ignoreCase = true)
 
@@ -1134,12 +1151,18 @@ object RootHelper {
         return executeSuCommand("killall system_server")
     }
 
+    private data class ParsedSortableLine(
+        val sortKey: String,
+        val originalIndex: Int,
+        val entry: LogEntry
+    )
+
     fun parseLogs(raw: String): List<LogEntry> {
-        return raw.lineSequence()
+        val parsed = raw.lineSequence()
             .map { it.trim() }
             .filter { it.isNotBlank() && !it.startsWith("--------- beginning of ") }
             .distinct()
-            .map { line ->
+            .mapIndexed { idx, line ->
                 val cleaned = cleanLogMessage(line)
                 val type = when {
                     cleaned.contains("BLOCKED", ignoreCase = true) -> LogType.BLOCKED
@@ -1148,16 +1171,81 @@ object RootHelper {
                     cleaned.contains("failed", ignoreCase = true) || cleaned.contains("error", ignoreCase = true) -> LogType.ERROR
                     else -> LogType.INFO
                 }
-                LogEntry(
+                val entry = LogEntry(
                     type = type,
                     time = extractTime(line),
                     message = cleaned
                 )
+                ParsedSortableLine(
+                    sortKey = extractSortTimestampKey(line),
+                    originalIndex = idx,
+                    entry = entry
+                )
             }
-            .distinctBy { entry ->
-                if (entry.time.isNotEmpty()) entry.time to entry.message else entry.message
+            .distinctBy { item ->
+                if (item.entry.time.isNotEmpty()) item.entry.time to item.entry.message else item.entry.message
             }
             .toList()
+
+        // Sort chronologically when dated timestamps are present so disk log + Vector log + logcat interleave cleanly
+        val hasDatedEntries = parsed.all { it.sortKey.isNotEmpty() }
+        return if (hasDatedEntries && parsed.size > 1) {
+            parsed.sortedWith(compareBy<ParsedSortableLine> { it.sortKey }.thenBy { it.originalIndex })
+                .map { it.entry }
+        } else {
+            parsed.map { it.entry }
+        }
+    }
+
+    fun serializeLogsForCache(logs: List<LogEntry>, maxLines: Int = 250): String {
+        return logs.take(maxLines).joinToString("\n") { entry ->
+            val safeMsg = entry.message.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+            "${entry.type.name}\t${entry.time}\t$safeMsg"
+        }
+    }
+
+    fun deserializeLogsFromCache(raw: String): List<LogEntry> {
+        if (raw.isBlank()) return emptyList()
+        return raw.lineSequence()
+            .mapNotNull { line ->
+                if (line.isBlank()) return@mapNotNull null
+                val p1 = line.indexOf('\t')
+                val p2 = if (p1 >= 0) line.indexOf('\t', p1 + 1) else -1
+                if (p1 <= 0 || p2 <= p1) return@mapNotNull null
+                val type = try {
+                    LogType.valueOf(line.substring(0, p1))
+                } catch (_: Throwable) {
+                    LogType.INFO
+                }
+                val time = line.substring(p1 + 1, p2)
+                val msg = line.substring(p2 + 1)
+                if (msg.isBlank()) null else LogEntry(type = type, time = time, message = msg)
+            }
+            .toList()
+    }
+
+    fun readCurrentBootId(): String {
+        return try {
+            File("/proc/sys/kernel/random/boot_id").readText().trim()
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    private fun extractSortTimestampKey(line: String): String {
+        // Matches: 2026-11-16T12:53:15.111 -> 11-16 12:53:15.111
+        val isoMatch = Regex("\\d{4}-(\\d{2}-\\d{2})T(\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?)").find(line)
+        if (isoMatch != null) {
+            val timePart = isoMatch.groupValues[2].let { if (it.length == 8) "$it.000" else it }
+            return "${isoMatch.groupValues[1]} $timePart"
+        }
+        // Matches: 11-16 12:53:15.111
+        val logcatMatch = Regex("\\b(\\d{2}-\\d{2})\\s+(\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?)").find(line)
+        if (logcatMatch != null) {
+            val timePart = logcatMatch.groupValues[2].let { if (it.length == 8) "$it.000" else it }
+            return "${logcatMatch.groupValues[1]} $timePart"
+        }
+        return ""
     }
 
     private fun extractTime(line: String): String {

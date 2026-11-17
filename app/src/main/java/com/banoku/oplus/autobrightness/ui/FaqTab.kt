@@ -43,14 +43,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.banoku.oplus.autobrightness.BuildConfig
 import com.banoku.oplus.autobrightness.R
-import com.banoku.oplus.autobrightness.ui.theme.AccentGreen
-import com.banoku.oplus.autobrightness.ui.theme.SkyCyan
-import com.banoku.oplus.autobrightness.ui.theme.SunGold
+import com.banoku.oplus.autobrightness.ui.theme.AppTheme
 import com.banoku.oplus.autobrightness.util.UpdateChecker
 
 @Composable
 fun FaqTabContent(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val colors = AppTheme.colors
     var expandedFaq by remember { mutableStateOf<Int?>(0) }
     var changelogExpanded by remember { mutableStateOf(false) }
 
@@ -142,17 +141,17 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                                 ChangelogBlock(
                                     versionTitle = "v1.5.0 (Vector Framework + Stats Telemetry)",
-                                    color = AccentGreen,
+                                    color = colors.accentGreen,
                                     body = "• Vector Framework (LibXposed API 102) & RemotePreferences: Zero-Root live sync + scope check, preserving full SystemProperties fallback for legacy LSPosed forks.\n" +
                                         "• Fixed Active Protection Statistics card: throttled GUARD_STATS telemetry + pinned BLOCKED/GUARD_STATS parsing across long uptimes, displaying sleep-reset blocks and active guard counters.\n" +
-                                        "• UI/UX & Localization cleanup: unified Status + Protection card, grouped Settings, moved Device Compatibility to Tools, collapsible terminal commands, OLED palette, and full RU/EN/UK strings."
+                                        "• UI/UX & Localization cleanup: unified Status + Protection card, grouped Settings, moved Device Compatibility to Tools, collapsible terminal commands, OLED & Light themes, and full RU/EN/UK strings."
                                 )
 
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 ChangelogBlock(
                                     versionTitle = "v1.4.5 (Universal Root, ColorOS 17 HBM & Auto-Installer)",
-                                    color = SkyCyan,
+                                    color = colors.accentCyan,
                                     body = "• Universal su detection (Magisk, KernelSU, KSUN, BakaSU, APatch) + Vector/LSPosed log path support.\n" +
                                         "• ColorOS 17 BrightnessModel calibration (6..4095, mNormalMaxNit, HBM up to 2000 nits) & in-app APK updater with progress bar.\n" +
                                         "• 3-mode Night Floor selector (Off / Auto 8.5 / Custom 1–150 nits)."
@@ -162,7 +161,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                                 ChangelogBlock(
                                     versionTitle = "v1.4.4 (PWM Sensor Switch & Live Nits)",
-                                    color = SkyCyan,
+                                    color = colors.accentCyan,
                                     body = "• Disableable under-display PWM sensor (high_pwm_rgb, Hook 10/10).\n" +
                                         "• Hardware spline nit calibration synced across Sensors & Curve Editor."
                                 )
@@ -171,7 +170,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                                 ChangelogBlock(
                                     versionTitle = "v1.4.0 – 1.4.3 (10-Hook Engine & Curve Profiles)",
-                                    color = SkyCyan,
+                                    color = colors.accentCyan,
                                     body = "• DragOpt resetAutoBrightness(int), Anti-Drift, Debounce Lock, 8.5 nit Night Floor, DarkEnv Skip, Per-App Smart Dimming Bypass, 360° Aux Smoother, Hysteresis Widener, 7-point Live Curve with JSON profiles."
                                 )
 
@@ -179,7 +178,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
 
                                 ChangelogBlock(
                                     versionTitle = "v1.1 – 1.3b (Foundation & SystemProperties IPC)",
-                                    color = SunGold,
+                                    color = colors.accentAmber,
                                     body = "• Dual-rule Reset Guard, ambient adapter hook, live SystemProperties sync, multi-language UI, GitHub update checker."
                                 )
                             }
@@ -224,14 +223,14 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                                 contentDescription = stringResource(R.string.open_github_desc),
-                                tint = SkyCyan,
+                                tint = colors.accentCyan,
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
                                 text = UpdateChecker.GITHUB_REPO_URL,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = SkyCyan,
+                                color = colors.accentCyan,
                                 textDecoration = TextDecoration.Underline
                             )
                         }

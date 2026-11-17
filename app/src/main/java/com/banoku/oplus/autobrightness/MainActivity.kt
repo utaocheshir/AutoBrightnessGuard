@@ -41,7 +41,7 @@ import com.banoku.oplus.autobrightness.ui.LogsTabContent
 import com.banoku.oplus.autobrightness.ui.OverviewTabContent
 import com.banoku.oplus.autobrightness.ui.SettingsTabContent
 import com.banoku.oplus.autobrightness.ui.ToolsTabContent
-import com.banoku.oplus.autobrightness.ui.theme.AccentRedBright
+import com.banoku.oplus.autobrightness.ui.theme.AppTheme
 import com.banoku.oplus.autobrightness.ui.theme.AutoBrightnessGuardTheme
 import com.banoku.oplus.autobrightness.util.DisplayCalibration
 import com.banoku.oplus.autobrightness.util.GuardStats
@@ -50,9 +50,12 @@ import com.banoku.oplus.autobrightness.util.RootHelper
 import com.banoku.oplus.autobrightness.util.UpdateChecker
 import com.banoku.oplus.autobrightness.util.UpdateResult
 import com.banoku.oplus.autobrightness.util.XposedBridgeClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,18 +78,38 @@ fun MainAppScreen() {
 
     val xposedState by XposedBridgeClient.state.collectAsStateWithLifecycle()
 
+    val currentBootId = remember { RootHelper.readCurrentBootId() }
+    val logsCacheFile = remember { File(context.filesDir, "abg_logs_cache.tsv") }
+    val cachedInitialLogs = remember {
+        val savedBootId = prefs.getString("pref_cached_boot_id", "").orEmpty()
+        val sameBoot = currentBootId.isNotEmpty() && currentBootId == savedBootId
+        if (sameBoot && logsCacheFile.exists()) {
+            try {
+                RootHelper.deserializeLogsFromCache(logsCacheFile.readText())
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+    }
+
     var selectedTab by remember { mutableIntStateOf(0) }
     var updateState by remember { mutableStateOf<UpdateResult?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
-    var stats by remember { mutableStateOf(GuardStats(0, "", "")) }
+    var stats by remember {
+        mutableStateOf(
+            if (cachedInitialLogs.isNotEmpty()) RootHelper.computeStats(cachedInitialLogs) else GuardStats(0, "", "")
+        )
+    }
     var moduleStatus by remember {
-        mutableStateOf(RootHelper.parseModuleRuntimeStatus(emptyList(), BuildConfig.VERSION_NAME))
+        mutableStateOf(RootHelper.parseModuleRuntimeStatus(cachedInitialLogs, BuildConfig.VERSION_NAME))
     }
     var stockCurveNits by remember {
         val cached = prefs.getString("pref_stock_curve_cache", "").orEmpty()
         mutableStateOf(BrightnessMath.parseNitArray(cached)?.toList())
     }
-    var moduleLogs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
+    var moduleLogs by remember { mutableStateOf(cachedInitialLogs) }
     var displayCalibration by remember { mutableStateOf<DisplayCalibration?>(null) }
     var isRefreshingStatus by remember { mutableStateOf(false) }
     var isRootAvailable by remember { mutableStateOf(RootHelper.isRootAvailable()) }
@@ -104,10 +127,25 @@ fun MainAppScreen() {
         ).apply()
     }
 
-    fun applyLogsToRuntimeState(logs: List<LogEntry>): Boolean {
-        moduleLogs = logs
+    fun persistLogsCache(logs: List<LogEntry>) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                if (logs.isEmpty()) {
+                    if (logsCacheFile.exists()) logsCacheFile.delete()
+                } else {
+                    logsCacheFile.writeText(RootHelper.serializeLogsForCache(logs))
+                    if (currentBootId.isNotEmpty()) {
+                        prefs.edit().putString("pref_cached_boot_id", currentBootId).apply()
+                    }
+                }
+            } catch (_: Throwable) { }
+        }
+    }
+
+    fun applyLogsToRuntimeState(logs: List<LogEntry>, clearIfEmpty: Boolean = false): Boolean {
         var foundStock = false
         if (logs.isNotEmpty()) {
+            moduleLogs = logs
             frameworkDiagHint = ""
             stats = RootHelper.computeStats(logs)
             moduleStatus = RootHelper.parseModuleRuntimeStatus(logs, BuildConfig.VERSION_NAME)
@@ -116,9 +154,12 @@ fun MainAppScreen() {
                 cacheStockCurve(parsedStock)
                 foundStock = true
             }
-        } else {
+            persistLogsCache(logs)
+        } else if (clearIfEmpty) {
+            moduleLogs = emptyList()
             stats = GuardStats(0, "", "")
             moduleStatus = RootHelper.parseModuleRuntimeStatus(emptyList(), BuildConfig.VERSION_NAME)
+            persistLogsCache(emptyList())
         }
         return foundStock
     }
@@ -137,12 +178,15 @@ fun MainAppScreen() {
             val logs = logsJob.await()
             val cal = calJob.await()
 
-            val foundStock = applyLogsToRuntimeState(logs)
+            val sameBootCacheValid = currentBootId.isNotEmpty() &&
+                currentBootId == prefs.getString("pref_cached_boot_id", "").orEmpty() &&
+                moduleLogs.isNotEmpty()
+            val foundStock = applyLogsToRuntimeState(logs, clearIfEmpty = hasRoot && !sameBootCacheValid)
             if (cal != null) {
                 displayCalibration = cal
             }
 
-            if (logs.isEmpty() && hasRoot) {
+            if (logs.isEmpty() && moduleLogs.isEmpty() && hasRoot) {
                 frameworkDiagHint = RootHelper.readFrameworkDiagnosticHint()
             }
 
@@ -200,7 +244,7 @@ fun MainAppScreen() {
                         }
                     }
                 ) {
-                    Text(stringResource(R.string.soft_reboot_btn), color = AccentRedBright)
+                    Text(stringResource(R.string.soft_reboot_btn), color = AppTheme.colors.accentRed)
                 }
             },
             dismissButton = {
@@ -218,7 +262,7 @@ fun MainAppScreen() {
         bottomBar = {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                tonalElevation = 8.dp
+                tonalElevation = if (AppTheme.colors.isDark) 8.dp else 4.dp
             ) {
                 NavigationBarItem(
                     selected = selectedTab == 0,

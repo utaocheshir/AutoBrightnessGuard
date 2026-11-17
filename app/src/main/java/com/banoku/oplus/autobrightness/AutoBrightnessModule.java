@@ -12,8 +12,13 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -96,6 +101,14 @@ public class AutoBrightnessModule extends XposedModule {
     private static final String ALARM_LAMBDA = "lambda$new$1";
     private static final String ALARM_WRAPPER = "android.app.AlarmManager$ListenerWrapper";
 
+    public static final String DISK_LOG_PATH = "/data/system/autobrightness_guard.log";
+    public static final String DISK_LOG_OLD_PATH = "/data/system/autobrightness_guard.log.old";
+    private static final long MAX_DISK_LOG_BYTES = 96L * 1024L;
+    private static final long SETTINGS_CACHE_TTL_MS = 750L;
+    private static final long BURST_COALESCE_FAST_MS = 2_500L;
+    private static final long BURST_COALESCE_SLOW_MS = 12_000L;
+    private static final float DARK_ENV_COUNT_MAX_NIT = 65.0f;
+
     public static final float NIGHT_MIN_FLOOR_NITS = BrightnessMath.NIGHT_MIN_FLOOR_NITS;
     private static final float MAX_AUX_INDOOR_LUX = BrightnessMath.MAX_AUX_INDOOR_LUX;
     private static final int MAX_PASS_LOGS = 10;
@@ -115,10 +128,22 @@ public class AutoBrightnessModule extends XposedModule {
     private final AtomicInteger appliedCustomCurve = new AtomicInteger();
     private final AtomicInteger blockedPwmSensor = new AtomicInteger();
 
+    // Burst-coalescing timestamps so high-frequency display/animation ticks count episodes cleanly
+    private volatile long mLastAntiDriftCountMs = 0L;
+    private volatile long mLastDebounceCountMs = 0L;
+    private volatile long mLastDarkEnvCountMs = 0L;
+    private volatile long mLastFloorCountMs = 0L;
+    private volatile long mLastDimmingCountMs = 0L;
+    private volatile long mLastAuxCountMs = 0L;
+    private volatile long mLastHystCountMs = 0L;
+    private volatile long mLastPwmCountMs = 0L;
+
     // Dual-channel config: Vector/LibXposed RemotePreferences + SystemProperties fallback
     private volatile SharedPreferences mRemotePrefs;
+    private volatile SettingsSnapshot mSettingsSnapshot;
     private final SharedPreferences.OnSharedPreferenceChangeListener mRemotePrefsListener =
             (prefs, key) -> {
+                mSettingsSnapshot = null;
                 if ("pref_curve_config".equals(key)) {
                     mLastRawCurve = "";
                 } else if ("pref_disable_pwm_sensor".equals(key)) {
@@ -126,12 +151,16 @@ public class AutoBrightnessModule extends XposedModule {
                 }
             };
 
-    // Compact live protection stats throttling (piggybacked on existing calls, zero background threads)
+    // Compact live protection stats & fail-open disk log ring buffer
+    private final Object mDiskLogLock = new Object();
+    private volatile boolean mBootDiskRotated = false;
     private volatile long mLastStatsLogMs = 0L;
     private volatile long mLastHeartbeatReemitMs = 0L;
     private volatile long mLastLoggedTotalEvents = -1L;
     private volatile long mLastBlockedEpochMs = 0L;
     private volatile String mBootSummaryLine = "";
+    private volatile int mInstalledHookCount = 0;
+    private volatile String mInstalledHookMask = "0000000000";
 
     // Cached reflection handles (avoid repeated Class.forName in hot brightness paths)
     private static volatile Method sSpGetBoolean;
@@ -164,6 +193,61 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile Field mPairSecondField;
     private volatile Method mOplusPairCreate;
 
+    private static final class SettingsSnapshot {
+        final long capturedAtMs;
+        final boolean blockReset;
+        final boolean blockAmbient;
+        final boolean strictAlarm;
+        final boolean verboseLog;
+        final boolean stabilityGuard;
+        final boolean autoFloor;
+        final float customMinNit;
+        final boolean debounceLock;
+        final float hysteresisScale;
+        final boolean disableSmartDimming;
+        final boolean dualSensorGuard;
+        final boolean disableMainSensor;
+        final boolean disableAuxSensor;
+        final boolean disablePwmSensor;
+        final String curveRaw;
+
+        SettingsSnapshot(
+                long capturedAtMs,
+                boolean blockReset,
+                boolean blockAmbient,
+                boolean strictAlarm,
+                boolean verboseLog,
+                boolean stabilityGuard,
+                boolean autoFloor,
+                float customMinNit,
+                boolean debounceLock,
+                float hysteresisScale,
+                boolean disableSmartDimming,
+                boolean dualSensorGuard,
+                boolean disableMainSensor,
+                boolean disableAuxSensor,
+                boolean disablePwmSensor,
+                String curveRaw
+        ) {
+            this.capturedAtMs = capturedAtMs;
+            this.blockReset = blockReset;
+            this.blockAmbient = blockAmbient;
+            this.strictAlarm = strictAlarm;
+            this.verboseLog = verboseLog;
+            this.stabilityGuard = stabilityGuard;
+            this.autoFloor = autoFloor;
+            this.customMinNit = customMinNit;
+            this.debounceLock = debounceLock;
+            this.hysteresisScale = hysteresisScale;
+            this.disableSmartDimming = disableSmartDimming;
+            this.dualSensorGuard = dualSensorGuard;
+            this.disableMainSensor = disableMainSensor;
+            this.disableAuxSensor = disableAuxSensor;
+            this.disablePwmSensor = disablePwmSensor;
+            this.curveRaw = curveRaw;
+        }
+    }
+
     public AutoBrightnessModule() {
         super();
     }
@@ -174,6 +258,7 @@ public class AutoBrightnessModule extends XposedModule {
         try {
             String proc = param.getProcessName();
             if ("system_server".equals(proc) || "android".equals(proc)) {
+                rotateDiskLogForNewBoot();
                 note(Log.INFO, "onModuleLoaded in " + proc + " (v" + VERSION + ")");
             }
         } catch (Throwable ignored) { }
@@ -182,6 +267,7 @@ public class AutoBrightnessModule extends XposedModule {
     @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
         super.onSystemServerStarting(param);
+        rotateDiskLogForNewBoot();
         initRemotePreferences();
         note(Log.INFO, "v" + VERSION + " (Vector/LSPosed Verified Engine) starting, sdk=" + Build.VERSION.SDK_INT
                 + ", remote=" + (mRemotePrefs != null) + ", build=" + Build.FINGERPRINT);
@@ -223,11 +309,15 @@ public class AutoBrightnessModule extends XposedModule {
         boolean[] statusArr = new boolean[] { h1, h2, h3, h4, (h5a && h5b), h6, h7, h8, h9, h10 };
         int okCount = 0;
         StringBuilder summary = new StringBuilder();
+        StringBuilder mask = new StringBuilder(10);
         for (int i = 0; i < statusArr.length; i++) {
             if (statusArr[i]) okCount++;
+            mask.append(statusArr[i] ? '1' : '0');
             if (i > 0) summary.append(',');
             summary.append(i + 1).append(':').append(statusArr[i] ? "OK" : "SKIP");
         }
+        mInstalledHookCount = okCount;
+        mInstalledHookMask = mask.toString();
         String summaryLine = "HOOK_SUMMARY:installed=" + okCount + "/10,version=" + VERSION
                 + ",sdk=" + Build.VERSION.SDK_INT + ",hooks=" + summary;
         mBootSummaryLine = summaryLine;
@@ -235,10 +325,10 @@ public class AutoBrightnessModule extends XposedModule {
         note(Log.INFO, summaryLine);
 
         // Log whether custom curve is active immediately on boot
-        String bootCurve = getStringSetting("pref_curve_config", PROP_CURVE_CONFIG, "");
-        if (!bootCurve.isEmpty()) {
-            BrightnessMath.CurveConfig parsedBoot = BrightnessMath.parseCurveConfig(bootCurve);
-            note(Log.INFO, "Boot custom curve state: enabled=" + parsedBoot.enabled + " raw=" + bootCurve);
+        SettingsSnapshot bootSettings = getSettings();
+        if (!bootSettings.curveRaw.isEmpty()) {
+            BrightnessMath.CurveConfig parsedBoot = BrightnessMath.parseCurveConfig(bootSettings.curveRaw);
+            note(Log.INFO, "Boot custom curve state: enabled=" + parsedBoot.enabled + " raw=" + bootSettings.curveRaw);
         }
     }
 
@@ -545,16 +635,16 @@ public class AutoBrightnessModule extends XposedModule {
     private final class ResetGuard implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!getBoolSetting("pref_block_reset", PROP_BLOCK_RESET, true)) {
+            SettingsSnapshot cfg = getSettings();
+            if (!cfg.blockReset) {
                 return chain.proceed();
             }
 
             String rule = null;
             StackTraceElement[] stack = null;
-            boolean strictAlarm = getBoolSetting("pref_strict_alarm", PROP_STRICT_ALARM, false);
             try {
                 stack = Thread.currentThread().getStackTrace();
-                rule = matchAlarmContext(stack, strictAlarm);
+                rule = matchAlarmContext(stack, cfg.strictAlarm);
             } catch (Throwable ignored) { }
 
             if (rule != null) {
@@ -565,9 +655,8 @@ public class AutoBrightnessModule extends XposedModule {
                 return null;
             }
 
-            boolean verbose = getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false);
             int p = passedReset.incrementAndGet();
-            if (verbose || p <= MAX_PASS_LOGS) {
+            if (cfg.verboseLog || p <= MAX_PASS_LOGS) {
                 note(Log.INFO, "passed resetAutoBrightness #" + p + " from " + formatCallers(stack));
             }
             return chain.proceed();
@@ -580,7 +669,8 @@ public class AutoBrightnessModule extends XposedModule {
     private final class AmbientAdapterGuard implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!getBoolSetting("pref_block_ambient", PROP_BLOCK_AMBIENT, true)) {
+            SettingsSnapshot cfg = getSettings();
+            if (!cfg.blockAmbient) {
                 return chain.proceed();
             }
 
@@ -595,9 +685,8 @@ public class AutoBrightnessModule extends XposedModule {
                     || (reason != null && reason.toLowerCase(Locale.US).contains("reset"));
 
             String rule = null;
-            boolean strictAlarm = getBoolSetting("pref_strict_alarm", PROP_STRICT_ALARM, false);
             try {
-                rule = matchAlarmContext(Thread.currentThread().getStackTrace(), strictAlarm);
+                rule = matchAlarmContext(Thread.currentThread().getStackTrace(), cfg.strictAlarm);
             } catch (Throwable ignored) { }
 
             if (isResetReason || rule != null) {
@@ -624,7 +713,8 @@ public class AutoBrightnessModule extends XposedModule {
 
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!getBoolSetting("pref_stability_guard", PROP_STABILITY_GUARD, true)) {
+            SettingsSnapshot cfg = getSettings();
+            if (!cfg.stabilityGuard) {
                 return chain.proceed();
             }
 
@@ -636,11 +726,15 @@ public class AutoBrightnessModule extends XposedModule {
                         return chain.proceed();
                     }
                 }
-                int n = stabilizedDrift.incrementAndGet();
-                if (n == 1 || (n % 50 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
-                    note(Log.INFO, "GUARD anti-drift suppressed " + sourceName + " #" + n);
+                long now = SystemClock.elapsedRealtime();
+                if (mLastAntiDriftCountMs == 0L || (now - mLastAntiDriftCountMs) >= BURST_COALESCE_FAST_MS) {
+                    mLastAntiDriftCountMs = now;
+                    int n = stabilizedDrift.incrementAndGet();
+                    if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
+                        note(Log.INFO, "GUARD anti-drift suppressed " + sourceName + " #" + n);
+                    }
+                    maybeLogCompactStats(false);
                 }
-                maybeLogCompactStats(false);
                 return Float.NaN;
             } catch (Throwable ignored) {
                 return chain.proceed();
@@ -656,17 +750,22 @@ public class AutoBrightnessModule extends XposedModule {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
             Object result = chain.proceed();
-            if (!getBoolSetting("pref_debounce_lock", PROP_DEBOUNCE_LOCK, true)) {
+            SettingsSnapshot cfg = getSettings();
+            if (!cfg.debounceLock) {
                 return result;
             }
             if (result instanceof Float) {
                 float scale = (Float) result;
                 if (scale > 1.0f) {
-                    int n = lockedDebounce.incrementAndGet();
-                    if (n == 1 || (n % 100 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
-                        note(Log.INFO, "GUARD debounce accelerateScale clamped " + scale + " -> 1.0 (#" + n + ")");
+                    long now = SystemClock.elapsedRealtime();
+                    if (mLastDebounceCountMs == 0L || (now - mLastDebounceCountMs) >= BURST_COALESCE_FAST_MS) {
+                        mLastDebounceCountMs = now;
+                        int n = lockedDebounce.incrementAndGet();
+                        if (n == 1 || (n % 50 == 1 && cfg.verboseLog)) {
+                            note(Log.INFO, "GUARD debounce accelerateScale clamped " + scale + " -> 1.0 (#" + n + ")");
+                        }
+                        maybeLogCompactStats(false);
                     }
-                    maybeLogCompactStats(false);
                     return 1.0f;
                 }
             }
@@ -681,33 +780,46 @@ public class AutoBrightnessModule extends XposedModule {
     private final class DarkEnvSkipHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            boolean autoFloor = getBoolSetting("pref_min_floor", PROP_MIN_FLOOR, true);
-            float customFloor = getFloatSetting("pref_custom_min_nit", PROP_CUSTOM_MIN_NIT, 0f, 0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT);
-            if (!autoFloor && customFloor <= 0f) {
+            SettingsSnapshot cfg = getSettings();
+            if (!cfg.autoFloor && cfg.customMinNit <= 0f) {
                 return chain.proceed();
             }
-            int n = skippedDarkEnv.incrementAndGet();
-            if (n == 1 || (n % 200 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
-                note(Log.INFO, "GUARD skipped DarkEnv 20-min progressive dimming (#" + n + ")");
+            float nit = -1f;
+            try {
+                Object builder = chain.getArg(0);
+                if (builder != null && mBuilderGetNit != null) {
+                    nit = (Float) mBuilderGetNit.invoke(builder);
+                }
+            } catch (Throwable ignored) { }
+
+            // Only count telemetry in dim/indoor range where 20-min dark dimming applies
+            if (nit < 0f || nit <= DARK_ENV_COUNT_MAX_NIT) {
+                long now = SystemClock.elapsedRealtime();
+                if (mLastDarkEnvCountMs == 0L || (now - mLastDarkEnvCountMs) >= BURST_COALESCE_SLOW_MS) {
+                    mLastDarkEnvCountMs = now;
+                    int n = skippedDarkEnv.incrementAndGet();
+                    if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
+                        note(Log.INFO, "GUARD skipped DarkEnv 20-min progressive dimming (#" + n + ")");
+                    }
+                    maybeLogCompactStats(false);
+                }
             }
-            maybeLogCompactStats(false);
             return Boolean.TRUE;
         }
     }
 
     /**
      * 5b. Night Reading Floor OR Unconditional Manual Floor:
-     * - When PROP_MIN_FLOOR / pref_min_floor is true: enforces >= 8.5 nits in auto mode (luxValid && !isDragging).
-     * - When PROP_MIN_FLOOR / pref_min_floor is false and custom_min_nit > 0:
-     *   UNCONDITIONALLY prevents backlight nits from dropping below custom_min_nit while screen is lit (nit > 0).
+     * - When autoFloor is true: enforces >= 8.5 nits in auto mode (luxValid && !isDragging).
+     * - When autoFloor is false and customMinNit > 0:
+     *   UNCONDITIONALLY prevents backlight nits from dropping below customMinNit while screen is lit (nit > 0).
      */
     private final class NightNitFloorHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            boolean autoFloor = getBoolSetting("pref_min_floor", PROP_MIN_FLOOR, true);
-            float customFloor = autoFloor
-                    ? 0f
-                    : getFloatSetting("pref_custom_min_nit", PROP_CUSTOM_MIN_NIT, 0f, 0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT);
+            SettingsSnapshot cfg = getSettings();
+            boolean autoFloor = cfg.autoFloor;
+            float customFloor = autoFloor ? 0f : cfg.customMinNit;
 
             if (!autoFloor && customFloor <= 0f) {
                 return chain.proceed();
@@ -742,12 +854,16 @@ public class AutoBrightnessModule extends XposedModule {
                                 }
                             }
 
-                            int n = clampedBrightness.incrementAndGet();
-                            if (n == 1 || (n % 100 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
-                                String modeTag = autoFloor ? "night floor" : "manual unconditional floor";
-                                note(Log.INFO, "GUARD " + modeTag + " clamped " + nit + " -> " + targetFloor + " nits (#" + n + ")");
+                            long now = SystemClock.elapsedRealtime();
+                            if (mLastFloorCountMs == 0L || (now - mLastFloorCountMs) >= 1_500L) {
+                                mLastFloorCountMs = now;
+                                int n = clampedBrightness.incrementAndGet();
+                                if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
+                                    String modeTag = autoFloor ? "night floor" : "manual unconditional floor";
+                                    note(Log.INFO, "GUARD " + modeTag + " clamped " + nit + " -> " + targetFloor + " nits (#" + n + ")");
+                                }
+                                maybeLogCompactStats(false);
                             }
-                            maybeLogCompactStats(false);
                         }
                     }
                 }
@@ -763,14 +879,19 @@ public class AutoBrightnessModule extends XposedModule {
     private final class SmartDimmingBypassHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            if (!getBoolSetting("pref_disable_smart_dimming", PROP_DISABLE_SMART_DIMMING, true)) {
+            SettingsSnapshot cfg = getSettings();
+            if (!cfg.disableSmartDimming) {
                 return chain.proceed();
             }
-            int n = bypassedAppDimming.incrementAndGet();
-            if (n == 1 || (n % 200 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
-                note(Log.INFO, "GUARD bypassed OplusFeatureReduceBrightness per-app dimming (#" + n + ")");
+            long now = SystemClock.elapsedRealtime();
+            if (mLastDimmingCountMs == 0L || (now - mLastDimmingCountMs) >= BURST_COALESCE_SLOW_MS) {
+                mLastDimmingCountMs = now;
+                int n = bypassedAppDimming.incrementAndGet();
+                if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
+                    note(Log.INFO, "GUARD bypassed OplusFeatureReduceBrightness per-app dimming (#" + n + ")");
+                }
+                maybeLogCompactStats(false);
             }
-            maybeLogCompactStats(false);
             return Boolean.TRUE;
         }
     }
@@ -779,14 +900,15 @@ public class AutoBrightnessModule extends XposedModule {
      * 7. Dual 360° Aux Sensor Balancer + Individual Sensor Disable Toggles:
      * - If disable_aux_sensor is enabled: returns mainLux (ignores rear sensor).
      * - If disable_main_sensor is enabled: returns auxLux (uses rear sensor directly).
-     * - Otherwise smooths indoor spikes with proportional blend + EMA (0.35 alpha) instead of cutting off rear response.
+     * - Otherwise smooths significant indoor spikes (> 3 lx deadband) with blend + EMA (0.35 alpha).
      */
     private final class DualSensorAuxHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            boolean disableAux = getBoolSetting("pref_disable_aux_sensor", PROP_DISABLE_AUX_SENSOR, false);
-            boolean disableMain = getBoolSetting("pref_disable_main_sensor", PROP_DISABLE_MAIN_SENSOR, false);
-            boolean dualGuard = getBoolSetting("pref_dual_sensor_guard", PROP_DUAL_SENSOR_GUARD, true);
+            SettingsSnapshot cfg = getSettings();
+            boolean disableAux = cfg.disableAuxSensor;
+            boolean disableMain = cfg.disableMainSensor;
+            boolean dualGuard = cfg.dualSensorGuard;
 
             if (!disableAux && !disableMain && !dualGuard) {
                 mLastAuxEmaLux = Float.NaN;
@@ -804,17 +926,22 @@ public class AutoBrightnessModule extends XposedModule {
                     return auxLux;
                 }
 
-                if (dualGuard && !Float.isNaN(mainLux) && !Float.isNaN(auxLux)
-                        && mainLux >= 0f && mainLux < MAX_AUX_INDOOR_LUX && auxLux > mainLux) {
+                if (dualGuard && BrightnessMath.shouldSmoothIndoorAuxLux(mainLux, auxLux)) {
                     float blended = smoothIndoorAuxLux(mainLux, auxLux);
                     float smoothed = BrightnessMath.stepAuxEma(mLastAuxEmaLux, blended, 0.35f);
                     mLastAuxEmaLux = smoothed;
 
-                    int n = smoothedAuxSensor.incrementAndGet();
-                    if (n == 1 || (n % 50 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
-                        note(Log.INFO, "GUARD dual-sensor smoothed auxLux (" + mainLux + ", " + auxLux + ") -> " + smoothed);
+                    if (Math.abs(smoothed - auxLux) >= 1.5f) {
+                        long now = SystemClock.elapsedRealtime();
+                        if (mLastAuxCountMs == 0L || (now - mLastAuxCountMs) >= BURST_COALESCE_FAST_MS) {
+                            mLastAuxCountMs = now;
+                            int n = smoothedAuxSensor.incrementAndGet();
+                            if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
+                                note(Log.INFO, "GUARD dual-sensor smoothed auxLux (" + mainLux + ", " + auxLux + ") -> " + smoothed);
+                            }
+                            maybeLogCompactStats(false);
+                        }
                     }
-                    maybeLogCompactStats(false);
                     return smoothed;
                 }
                 mLastAuxEmaLux = Float.isNaN(auxLux) ? mainLux : Math.max(mainLux, auxLux);
@@ -839,13 +966,8 @@ public class AutoBrightnessModule extends XposedModule {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
             Object pair = chain.proceed();
-            float scale = getFloatSetting(
-                    "pref_hysteresis_scale",
-                    PROP_HYSTERESIS,
-                    BrightnessMath.DEFAULT_HYSTERESIS_SCALE,
-                    BrightnessMath.MIN_HYSTERESIS_SCALE,
-                    BrightnessMath.MAX_HYSTERESIS_SCALE
-            );
+            SettingsSnapshot cfg = getSettings();
+            float scale = cfg.hysteresisScale;
             if (scale <= 1.01f || pair == null || mPairFirstField == null || mPairSecondField == null || mOplusPairCreate == null) {
                 return pair;
             }
@@ -860,12 +982,16 @@ public class AutoBrightnessModule extends XposedModule {
                     float[] widened = BrightnessMath.widenRangeBounds(targetLux, left, right, scale);
                     if (widened[0] != left || widened[1] != right) {
                         Object widenedPair = mOplusPairCreate.invoke(null, pairTag, widened[0], widened[1]);
-                        int n = widenedHysteresis.incrementAndGet();
-                        if (n == 1 || (n % 100 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
-                            note(Log.INFO, "GUARD hysteresis (" + scale + "x) at " + targetLux
-                                    + " lx: [" + left + ".." + right + "] -> [" + widened[0] + ".." + widened[1] + "]");
+                        long now = SystemClock.elapsedRealtime();
+                        if (mLastHystCountMs == 0L || (now - mLastHystCountMs) >= BURST_COALESCE_FAST_MS) {
+                            mLastHystCountMs = now;
+                            int n = widenedHysteresis.incrementAndGet();
+                            if (n == 1 || (n % 50 == 1 && cfg.verboseLog)) {
+                                note(Log.INFO, "GUARD hysteresis (" + scale + "x) at " + targetLux
+                                        + " lx: [" + left + ".." + right + "] -> [" + widened[0] + ".." + widened[1] + "]");
+                            }
+                            maybeLogCompactStats(false);
                         }
-                        maybeLogCompactStats(false);
                         return widenedPair;
                     }
                 }
@@ -913,7 +1039,8 @@ public class AutoBrightnessModule extends XposedModule {
                 boolean isPrimaryCurve = name != null
                         && (name.isEmpty() || "default".equalsIgnoreCase(name) || "normal".equalsIgnoreCase(name));
                 if (name != null && name.isEmpty()) {
-                    String raw = getStringSetting("pref_curve_config", PROP_CURVE_CONFIG, "");
+                    SettingsSnapshot cfgSnap = getSettings();
+                    String raw = cfgSnap.curveRaw;
                     if (!raw.equals(mLastRawCurve)) {
                         mCachedCurveConfig = BrightnessMath.parseCurveConfig(raw);
                         mLastRawCurve = raw;
@@ -931,7 +1058,7 @@ public class AutoBrightnessModule extends XposedModule {
                         }
                         maybeSampleStockCurve(chain, name);
                         int n = appliedCustomCurve.incrementAndGet();
-                        if (n == 1 || (n % 200 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
+                        if (n == 1 || (n % 50 == 1 && cfgSnap.verboseLog)) {
                             note(Log.INFO, "CURVE override lux=" + lux + " -> " + customNit + " nits (#" + n + ")");
                         }
                         maybeLogCompactStats(false);
@@ -959,12 +1086,7 @@ public class AutoBrightnessModule extends XposedModule {
      */
     private final class PwmSensorGuardHook implements XposedInterface.Hooker {
         private boolean isPwmDisabledCached() {
-            long now = SystemClock.elapsedRealtime();
-            if (mLastPwmPropCheckMs == 0L || (now - mLastPwmPropCheckMs) >= 500L) {
-                mCachedPwmDisabled = getBoolSetting("pref_disable_pwm_sensor", PROP_DISABLE_PWM_SENSOR, false);
-                mLastPwmPropCheckMs = now;
-            }
-            return mCachedPwmDisabled;
+            return getSettings().disablePwmSensor;
         }
 
         private boolean detectPwmSensor(Object queueInstance, int handle) {
@@ -1008,11 +1130,15 @@ public class AutoBrightnessModule extends XposedModule {
                 }
 
                 if (isPwm && isPwmDisabledCached()) {
-                    int n = blockedPwmSensor.incrementAndGet();
-                    if (n == 1 || (n % 200 == 1 && getBoolSetting("pref_verbose_log", PROP_VERBOSE_LOG, false))) {
-                        note(Log.INFO, "GUARD PWM sensor (high_pwm) blocked (#" + n + ")");
+                    long now = SystemClock.elapsedRealtime();
+                    if (mLastPwmCountMs == 0L || (now - mLastPwmCountMs) >= BURST_COALESCE_FAST_MS) {
+                        mLastPwmCountMs = now;
+                        int n = blockedPwmSensor.incrementAndGet();
+                        if (n == 1 || (n % 50 == 1 && getSettings().verboseLog)) {
+                            note(Log.INFO, "GUARD PWM sensor (high_pwm) blocked (#" + n + ")");
+                        }
+                        maybeLogCompactStats(false);
                     }
-                    maybeLogCompactStats(false);
                     return null;
                 }
             } catch (Throwable ignored) { }
@@ -1066,7 +1192,39 @@ public class AutoBrightnessModule extends XposedModule {
                 + ",hyst=" + widenedHysteresis.get()
                 + ",curve=" + appliedCustomCurve.get()
                 + ",pwm=" + blockedPwmSensor.get()
-                + ",last_block_ms=" + mLastBlockedEpochMs);
+                + ",last_block_ms=" + mLastBlockedEpochMs
+                + ",hooks=" + mInstalledHookCount + "/10"
+                + ",hook_mask=" + mInstalledHookMask
+                + ",ver=" + VERSION);
+    }
+
+    private SettingsSnapshot getSettings() {
+        long now = SystemClock.elapsedRealtime();
+        SettingsSnapshot current = mSettingsSnapshot;
+        if (current != null && (now - current.capturedAtMs) < SETTINGS_CACHE_TTL_MS) {
+            return current;
+        }
+        boolean preferRemote = shouldPreferRemotePrefs();
+        SettingsSnapshot fresh = new SettingsSnapshot(
+                now,
+                readBoolWithChannel("pref_block_reset", PROP_BLOCK_RESET, true, preferRemote),
+                readBoolWithChannel("pref_block_ambient", PROP_BLOCK_AMBIENT, true, preferRemote),
+                readBoolWithChannel("pref_strict_alarm", PROP_STRICT_ALARM, false, preferRemote),
+                readBoolWithChannel("pref_verbose_log", PROP_VERBOSE_LOG, false, preferRemote),
+                readBoolWithChannel("pref_stability_guard", PROP_STABILITY_GUARD, true, preferRemote),
+                readBoolWithChannel("pref_min_floor", PROP_MIN_FLOOR, true, preferRemote),
+                readFloatWithChannel("pref_custom_min_nit", PROP_CUSTOM_MIN_NIT, 0f, 0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT, preferRemote),
+                readBoolWithChannel("pref_debounce_lock", PROP_DEBOUNCE_LOCK, true, preferRemote),
+                readFloatWithChannel("pref_hysteresis_scale", PROP_HYSTERESIS, BrightnessMath.DEFAULT_HYSTERESIS_SCALE, BrightnessMath.MIN_HYSTERESIS_SCALE, BrightnessMath.MAX_HYSTERESIS_SCALE, preferRemote),
+                readBoolWithChannel("pref_disable_smart_dimming", PROP_DISABLE_SMART_DIMMING, true, preferRemote),
+                readBoolWithChannel("pref_dual_sensor_guard", PROP_DUAL_SENSOR_GUARD, true, preferRemote),
+                readBoolWithChannel("pref_disable_main_sensor", PROP_DISABLE_MAIN_SENSOR, false, preferRemote),
+                readBoolWithChannel("pref_disable_aux_sensor", PROP_DISABLE_AUX_SENSOR, false, preferRemote),
+                readBoolWithChannel("pref_disable_pwm_sensor", PROP_DISABLE_PWM_SENSOR, false, preferRemote),
+                readStringWithChannel("pref_curve_config", PROP_CURVE_CONFIG, "", preferRemote)
+        );
+        mSettingsSnapshot = fresh;
+        return fresh;
     }
 
     private boolean shouldPreferRemotePrefs() {
@@ -1087,9 +1245,9 @@ public class AutoBrightnessModule extends XposedModule {
         }
     }
 
-    private boolean getBoolSetting(String remoteKey, String propKey, boolean defaultValue) {
+    private boolean readBoolWithChannel(String remoteKey, String propKey, boolean defaultValue, boolean preferRemote) {
         SharedPreferences rp = mRemotePrefs;
-        if (shouldPreferRemotePrefs() && rp != null && remoteKey != null) {
+        if (preferRemote && rp != null && remoteKey != null) {
             try {
                 if (rp.contains(remoteKey)) {
                     return rp.getBoolean(remoteKey, defaultValue);
@@ -1109,9 +1267,9 @@ public class AutoBrightnessModule extends XposedModule {
         return defaultValue;
     }
 
-    private String getStringSetting(String remoteKey, String propKey, String defaultValue) {
+    private String readStringWithChannel(String remoteKey, String propKey, String defaultValue, boolean preferRemote) {
         SharedPreferences rp = mRemotePrefs;
-        if (shouldPreferRemotePrefs() && rp != null && remoteKey != null) {
+        if (preferRemote && rp != null && remoteKey != null) {
             try {
                 if (rp.contains(remoteKey)) {
                     String val = rp.getString(remoteKey, defaultValue);
@@ -1134,9 +1292,16 @@ public class AutoBrightnessModule extends XposedModule {
         return defaultValue;
     }
 
-    private float getFloatSetting(String remoteKey, String propKey, float defaultVal, float minVal, float maxVal) {
+    private float readFloatWithChannel(
+            String remoteKey,
+            String propKey,
+            float defaultVal,
+            float minVal,
+            float maxVal,
+            boolean preferRemote
+    ) {
         SharedPreferences rp = mRemotePrefs;
-        if (shouldPreferRemotePrefs() && rp != null && remoteKey != null) {
+        if (preferRemote && rp != null && remoteKey != null) {
             try {
                 if (rp.contains(remoteKey)) {
                     Object raw = rp.getAll().get(remoteKey);
@@ -1230,9 +1395,9 @@ public class AutoBrightnessModule extends XposedModule {
                 if (cls.startsWith(AutoBrightnessModule.class.getName())) pastSelf = true;
                 continue;
             }
-            if (cls.startsWith("LSPHooker_") || cls.startsWith("io.github.libxposed.")
-                    || cls.startsWith("org.lsposed.") || cls.startsWith("org.matrix.")
-                    || cls.startsWith("java.lang.reflect.")) {
+            if (cls.startsWith("LSPHooker_") || cls.startsWith("Vector_") || cls.contains("HookBridge")
+                    || cls.startsWith("io.github.libxposed.") || cls.startsWith("org.lsposed.")
+                    || cls.startsWith("org.matrix.") || cls.startsWith("java.lang.reflect.")) {
                 continue;
             }
             if (added++ > 0) sb.append(" <- ");
@@ -1252,6 +1417,83 @@ public class AutoBrightnessModule extends XposedModule {
         }
     }
 
+    private void rotateDiskLogForNewBoot() {
+        if (mBootDiskRotated) return;
+        synchronized (mDiskLogLock) {
+            if (mBootDiskRotated) return;
+            mBootDiskRotated = true;
+            try {
+                File current = new File(DISK_LOG_PATH);
+                if (current.exists() && current.length() > 0L) {
+                    File old = new File(DISK_LOG_OLD_PATH);
+                    if (old.exists()) {
+                        //noinspection ResultOfMethodCallIgnored
+                        old.delete();
+                    }
+                    //noinspection ResultOfMethodCallIgnored
+                    current.renameTo(old);
+                }
+            } catch (Throwable ignored) { }
+        }
+    }
+
+    private static String priorityLetter(int priority) {
+        switch (priority) {
+            case Log.WARN:
+                return "W";
+            case Log.ERROR:
+                return "E";
+            case Log.DEBUG:
+                return "D";
+            default:
+                return "I";
+        }
+    }
+
+    private void appendDiskLog(int priority, String msg) {
+        synchronized (mDiskLogLock) {
+            try {
+                File logFile = new File(DISK_LOG_PATH);
+                File parent = logFile.getParentFile();
+                if (parent != null && !parent.exists()) {
+                    //noinspection ResultOfMethodCallIgnored
+                    parent.mkdirs();
+                }
+
+                boolean rotatedMidSession = false;
+                if (logFile.exists() && logFile.length() >= MAX_DISK_LOG_BYTES) {
+                    File old = new File(DISK_LOG_OLD_PATH);
+                    if (old.exists()) {
+                        //noinspection ResultOfMethodCallIgnored
+                        old.delete();
+                    }
+                    //noinspection ResultOfMethodCallIgnored
+                    logFile.renameTo(old);
+                    rotatedMidSession = true;
+                }
+
+                SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US);
+                String nowTs = fmt.format(new Date());
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(logFile, true))) {
+                    if (rotatedMidSession) {
+                        String summary = mBootSummaryLine;
+                        if (summary != null && !summary.isEmpty()) {
+                            writer.write(nowTs + "  I " + TAG + ": " + summary);
+                            writer.newLine();
+                        }
+                        String stock = mLastStockCurve;
+                        if (stock != null && !stock.isEmpty()) {
+                            writer.write(nowTs + "  I " + TAG + ": STOCK_CURVE:" + stock);
+                            writer.newLine();
+                        }
+                    }
+                    writer.write(nowTs + "  " + priorityLetter(priority) + " " + TAG + ": " + msg);
+                    writer.newLine();
+                }
+            } catch (Throwable ignored) { }
+        }
+    }
+
     private void note(int priority, String msg) {
         try {
             log(priority, TAG, msg);
@@ -1260,5 +1502,6 @@ public class AutoBrightnessModule extends XposedModule {
                 Log.println(priority, TAG, msg);
             } catch (Throwable ignored2) { }
         }
+        appendDiskLog(priority, msg);
     }
 }

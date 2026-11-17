@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.sp
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
 import com.banoku.oplus.autobrightness.BrightnessMath
 import com.banoku.oplus.autobrightness.R
+import com.banoku.oplus.autobrightness.ui.theme.AppTheme
 import com.banoku.oplus.autobrightness.util.CurveProfile
 import com.banoku.oplus.autobrightness.util.CurveProfileRepository
 import com.banoku.oplus.autobrightness.util.XposedBridgeClient
@@ -101,6 +102,7 @@ fun CurveEditorCard(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    val colors = AppTheme.colors
 
     val defaultProfileName = stringResource(R.string.curve_default_profile_name)
     val initialStore = remember {
@@ -340,7 +342,7 @@ fun CurveEditorCard(
                     Icon(
                         imageVector = Icons.Default.Timeline,
                         contentDescription = null,
-                        tint = Color(0xFF38BDF8),
+                        tint = colors.accentCyan,
                         modifier = Modifier.size(22.dp)
                     )
                     Column {
@@ -486,7 +488,7 @@ fun CurveEditorCard(
                                     imageVector = Icons.Default.Delete,
                                     contentDescription = stringResource(R.string.curve_delete_profile),
                                     modifier = Modifier.size(18.dp),
-                                    tint = Color(0xFFF87171)
+                                    tint = colors.accentRed
                                 )
                             }
                         }
@@ -561,7 +563,7 @@ fun CurveEditorCard(
                             Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = stringResource(R.string.curve_refresh_stock),
-                                tint = Color(0xFF38BDF8)
+                                tint = colors.accentCyan
                             )
                         }
                     }
@@ -611,7 +613,7 @@ fun CurveEditorCard(
                                 color = if (isSelected) {
                                     MaterialTheme.colorScheme.primary
                                 } else if (isShowingStockReal) {
-                                    Color(0xFFF59E0B)
+                                    colors.accentAmber
                                 } else {
                                     MaterialTheme.colorScheme.onSurface
                                 }
@@ -761,6 +763,15 @@ private fun CurveGraphCanvas(
     hasRealStock: Boolean,
     onRefreshStockCurve: () -> Unit
 ) {
+    val colors = AppTheme.colors
+    val chartBg = if (colors.isDark) colors.terminalContainer else Color(0xFFF8FAFC)
+    val chartBorder = colors.terminalBorder
+    val gridLineColor = colors.dividerColor
+    val cyanAccent = colors.accentCyan
+    val amberAccent = colors.accentAmber
+    val greenAccent = colors.accentGreen
+    val neutralAccent = colors.heroMutedText
+
     val allMax = listOfNotNull(
         nitPoints.maxOrNull(),
         stockReferencePoints?.maxOrNull(),
@@ -786,8 +797,8 @@ private fun CurveGraphCanvas(
             .fillMaxWidth()
             .height(172.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF0A0F1D))
-            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(12.dp))
+            .background(chartBg)
+            .border(1.dp, chartBorder, RoundedCornerShape(12.dp))
             .padding(12.dp)
     ) {
         Canvas(modifier = Modifier.fillMaxWidth().height(148.dp)) {
@@ -811,11 +822,10 @@ private fun CurveGraphCanvas(
             }
 
             // Subtle horizontal grid lines
-            val gridColor = Color(0xFF1E293B)
             for (step in 1..3) {
                 val y = padTop + plotH * (step / 4f)
                 drawLine(
-                    color = gridColor,
+                    color = gridLineColor,
                     start = Offset(padLeft, y),
                     end = Offset(padLeft + plotW, y),
                     strokeWidth = 1.dp.toPx()
@@ -831,7 +841,7 @@ private fun CurveGraphCanvas(
                 }
                 drawPath(
                     path = refPath,
-                    color = Color(0xFFF59E0B).copy(alpha = 0.55f),
+                    color = amberAccent.copy(alpha = 0.65f),
                     style = Stroke(
                         width = 1.6.dp.toPx(),
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
@@ -860,14 +870,14 @@ private fun CurveGraphCanvas(
             }
 
             val accentColor = when {
-                isEnabled -> Color(0xFF38BDF8)
-                hasRealStock -> Color(0xFFF59E0B)
-                else -> Color(0xFF64748B)
+                isEnabled -> cyanAccent
+                hasRealStock -> amberAccent
+                else -> neutralAccent
             }
             drawPath(
                 path = areaPath,
                 brush = Brush.verticalGradient(
-                    colors = listOf(accentColor.copy(alpha = 0.28f), Color.Transparent),
+                    colors = listOf(accentColor.copy(alpha = if (colors.isDark) 0.28f else 0.18f), Color.Transparent),
                     startY = padTop,
                     endY = padTop + plotH
                 )
@@ -883,14 +893,14 @@ private fun CurveGraphCanvas(
                 val lx = xForLux(liveLux)
                 val ly = yForNit(currentTargetNit)
                 drawLine(
-                    color = Color(0xFF10B981).copy(alpha = 0.7f),
+                    color = greenAccent.copy(alpha = 0.7f),
                     start = Offset(lx, padTop),
                     end = Offset(lx, padTop + plotH),
                     strokeWidth = 1.5.dp.toPx(),
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
                 )
                 drawCircle(
-                    color = Color(0xFF10B981),
+                    color = greenAccent,
                     radius = 5.dp.toPx(),
                     center = Offset(lx, ly)
                 )
@@ -900,7 +910,7 @@ private fun CurveGraphCanvas(
             if (liveScreenNit != null && liveScreenNit > 0f) {
                 val sy = yForNit(liveScreenNit)
                 drawLine(
-                    color = Color(0xFF38BDF8).copy(alpha = 0.45f),
+                    color = cyanAccent.copy(alpha = 0.45f),
                     start = Offset(padLeft, sy),
                     end = Offset(padLeft + plotW, sy),
                     strokeWidth = 1.2.dp.toPx(),
@@ -908,7 +918,7 @@ private fun CurveGraphCanvas(
                 )
                 if (liveLux != null) {
                     drawCircle(
-                        color = Color(0xFF38BDF8),
+                        color = cyanAccent,
                         radius = 7.dp.toPx(),
                         center = Offset(xForLux(liveLux), sy),
                         style = Stroke(width = 2.dp.toPx())
@@ -920,13 +930,15 @@ private fun CurveGraphCanvas(
             points.forEachIndexed { idx, pt ->
                 val isSelected = idx == selectedIndex
                 drawCircle(
-                    color = if (isSelected) Color(0xFFFFC107) else accentColor,
+                    color = if (isSelected) {
+                        if (colors.isDark) Color(0xFFFFC107) else amberAccent
+                    } else accentColor,
                     radius = if (isSelected) 6.dp.toPx() else 3.5.dp.toPx(),
                     center = pt
                 )
                 if (isSelected) {
                     drawCircle(
-                        color = Color(0xFF0A0F1D),
+                        color = chartBg,
                         radius = 2.5.dp.toPx(),
                         center = pt
                     )
@@ -946,9 +958,9 @@ private fun CurveGraphCanvas(
                 Surface(
                     shape = RoundedCornerShape(6.dp),
                     color = when {
-                        isEnabled -> Color(0xFF0C4A6E)
-                        hasRealStock -> Color(0xFF78350F)
-                        else -> Color(0xFF1E293B)
+                        isEnabled -> colors.chartBadgeActiveBg
+                        hasRealStock -> colors.chartBadgeStockBg
+                        else -> colors.chartBadgeNeutralBg
                     },
                     modifier = if (!isEnabled) {
                         Modifier.clip(RoundedCornerShape(6.dp)).clickable { onRefreshStockCurve() }
@@ -966,9 +978,9 @@ private fun CurveGraphCanvas(
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = when {
-                            isEnabled -> Color(0xFF38BDF8)
-                            hasRealStock -> Color(0xFFFBBF24)
-                            else -> Color(0xFF94A3B8)
+                            isEnabled -> colors.chartBadgeActiveText
+                            hasRealStock -> colors.chartBadgeStockText
+                            else -> colors.chartBadgeNeutralText
                         }
                     )
                 }
@@ -978,7 +990,7 @@ private fun CurveGraphCanvas(
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF34D399)
+                        color = greenAccent
                     )
                 }
             }
@@ -994,7 +1006,7 @@ private fun CurveGraphCanvas(
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF38BDF8)
+                    color = cyanAccent
                 )
             }
         }

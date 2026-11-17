@@ -35,6 +35,7 @@ class ModuleUnitTest {
         assertEquals("persist.autobrightness.curve", AutoBrightnessModule.PROP_CURVE_CONFIG)
         assertEquals("persist.autobrightness.sync_ts", AutoBrightnessModule.PROP_SYNC_TS)
         assertEquals("pref_sync_ts", AutoBrightnessModule.PREF_SYNC_TS)
+        assertEquals("/data/system/autobrightness_guard.log", AutoBrightnessModule.DISK_LOG_PATH)
         assertEquals(8.5f, BrightnessMath.NIGHT_MIN_FLOOR_NITS, 0.001f)
         assertEquals(3500.0f, BrightnessMath.MAX_CURVE_NIT, 0.001f)
         assertEquals(150.0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT, 0.001f)
@@ -53,6 +54,12 @@ class ModuleUnitTest {
         // Temporal EMA step check
         assertEquals(76.0f, BrightnessMath.stepAuxEma(-1.0f, 76.0f, 0.35f), 0.001f)
         assertEquals(33.1f, BrightnessMath.stepAuxEma(10.0f, 76.0f, 0.35f), 0.001f)
+
+        // Indoor Aux deadband filter: ignore tiny <= 3 lx jitter & bright daylight (>= 200 lx)
+        assertFalse(BrightnessMath.shouldSmoothIndoorAuxLux(20f, 22f))
+        assertFalse(BrightnessMath.shouldSmoothIndoorAuxLux(100f, 103.5f))
+        assertTrue(BrightnessMath.shouldSmoothIndoorAuxLux(20f, 35f))
+        assertFalse(BrightnessMath.shouldSmoothIndoorAuxLux(250f, 400f))
     }
 
     @Test
@@ -268,6 +275,45 @@ class ModuleUnitTest {
         // Even if logd rotated out HOOK_SUMMARY, VectorModuleManager load keeps moduleDetected = true
         val vecRuntime = RootHelper.parseModuleRuntimeStatus(realEntries, "1.5.0")
         assertTrue(vecRuntime.moduleDetected)
+    }
+
+    @Test
+    fun hookMaskRecoveryChronologicalSortAndCacheRoundTripCheck() {
+        // 1. Recovery of 10/10 hook state & version from GUARD_STATS alone when boot/summary rotated out
+        val statsOnlyRaw = "11-16 14:30:05.123 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=2,ambient=1,drift=14,debounce=0,floor=3,darkenv=1,dimming=0,aux=2,hyst=1,curve=4,pwm=0,last_block_ms=1731740000000,hooks=10/10,hook_mask=1111111111,ver=1.5.0"
+        val statsEntries = RootHelper.parseLogs(statsOnlyRaw)
+        val recovered = RootHelper.parseModuleRuntimeStatus(statsEntries, "1.5.0")
+        assertTrue(recovered.moduleDetected)
+        assertEquals("1.5.0", recovered.loadedVersion)
+        assertEquals(10, recovered.installedCount)
+        assertTrue(recovered.hooks.all { it.state == HookState.INSTALLED })
+
+        // Partial hook_mask (hook #8 skipped = 0)
+        val partialRaw = "11-16 14:35:00.000 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=0,ambient=0,drift=1,debounce=0,floor=0,darkenv=0,dimming=0,aux=0,hyst=0,curve=0,pwm=0,last_block_ms=0,hooks=9/10,hook_mask=1111111011,ver=1.5.0"
+        val partialStatus = RootHelper.parseModuleRuntimeStatus(RootHelper.parseLogs(partialRaw), "1.5.0")
+        assertEquals(9, partialStatus.installedCount)
+        assertEquals(HookState.SKIPPED, partialStatus.hooks.first { it.id == 8 }.state)
+        assertEquals(HookState.INSTALLED, partialStatus.hooks.first { it.id == 10 }.state)
+
+        // 2. Chronological sorting across mixed Vector ISO and Android logcat/disk timestamps
+        val mixedRaw = listOf(
+            "11-16 13:10:53.200 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=0,ambient=0,drift=5,debounce=0,floor=0,darkenv=0,dimming=0,aux=0,hyst=0,curve=0,pwm=0,last_block_ms=0",
+            "[ 2026-11-16T12:53:15.111 1000: 3743: 3743 D/VectorModuleManager ] Loaded module com.banoku.oplus.autobrightness successfully.",
+            "11-16 13:05:10.050 3743 4156 I AutoBrightnessGuard: BLOCKED resetAutoBrightness #6"
+        ).joinToString("\n")
+        val sortedAsc = RootHelper.parseLogs(mixedRaw)
+        assertEquals(3, sortedAsc.size)
+        assertEquals("12:53:15", sortedAsc[0].time)
+        assertEquals("13:05:10", sortedAsc[1].time)
+        assertEquals("13:10:53", sortedAsc[2].time)
+
+        // 3. TSV cache round-trip preserves order, types, time, and messages with tabs/newlines sanitized
+        val cachedTsv = RootHelper.serializeLogsForCache(sortedAsc.reversed())
+        val restored = RootHelper.deserializeLogsFromCache(cachedTsv)
+        assertEquals(3, restored.size)
+        assertEquals("13:10:53", restored[0].time)
+        assertEquals(LogType.BLOCKED, restored[1].type)
+        assertEquals("Loaded module com.banoku.oplus.autobrightness successfully.", restored[2].message)
     }
 
     @Test

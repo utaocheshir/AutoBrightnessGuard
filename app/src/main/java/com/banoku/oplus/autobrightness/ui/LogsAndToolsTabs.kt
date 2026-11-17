@@ -76,12 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.banoku.oplus.autobrightness.BuildConfig
 import com.banoku.oplus.autobrightness.R
-import com.banoku.oplus.autobrightness.ui.theme.AccentGreen
-import com.banoku.oplus.autobrightness.ui.theme.AccentGreenBright
-import com.banoku.oplus.autobrightness.ui.theme.AccentRedBright
-import com.banoku.oplus.autobrightness.ui.theme.SkyCyan
-import com.banoku.oplus.autobrightness.ui.theme.SunAmber
-import com.banoku.oplus.autobrightness.ui.theme.SunGold
+import com.banoku.oplus.autobrightness.ui.theme.AppTheme
 import com.banoku.oplus.autobrightness.util.CompatibilityStatusType
 import com.banoku.oplus.autobrightness.util.DeviceCompatibility
 import com.banoku.oplus.autobrightness.util.GuardStats
@@ -110,6 +105,7 @@ fun LogsTabContent(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val colors = AppTheme.colors
     var logs by remember { mutableStateOf(initialLogs) }
     var isDemoMode by remember { mutableStateOf(false) }
     var diagHint by remember(frameworkDiagHint) { mutableStateOf(frameworkDiagHint) }
@@ -317,11 +313,11 @@ fun LogsTabContent(
 
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF0A0F1D),
+                color = colors.terminalContainer,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(12.dp))
+                    .border(1.dp, colors.terminalBorder, RoundedCornerShape(12.dp))
             ) {
                 if (filteredLogs.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -332,14 +328,14 @@ fun LogsTabContent(
                         ) {
                             Text(
                                 text = stringResource(R.string.logs_empty_box),
-                                color = Color(0xFF94A3B8),
+                                color = colors.heroMutedText,
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             if (filterText.isBlank() && diagHint.isNotBlank()) {
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFF111827),
-                                    border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                                    color = colors.logItemContainer,
+                                    border = BorderStroke(1.dp, colors.logItemBorder),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Column(
@@ -350,14 +346,14 @@ fun LogsTabContent(
                                             text = stringResource(R.string.logs_diag_header),
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold,
-                                            color = SunAmber
+                                            color = colors.accentAmber
                                         )
                                         Text(
                                             text = diagHint,
                                             style = MaterialTheme.typography.bodySmall,
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 11.sp,
-                                            color = Color(0xFFCBD5E1)
+                                            color = colors.heroSubtitleText
                                         )
                                     }
                                 }
@@ -383,19 +379,21 @@ fun LogsTabContent(
 
 @Composable
 fun LogItemView(entry: LogEntry) {
+    val colors = AppTheme.colors
     val (badgeBg, badgeText, badgeColor) = when (entry.type) {
-        LogType.BLOCKED -> Triple(Color(0xFF065F46), "BLOCKED", AccentGreenBright)
-        LogType.HOOK -> Triple(Color(0xFF78350F), "HOOKED", Color(0xFFFBBF24))
-        LogType.PASS -> Triple(Color(0xFF1E293B), "PASS", Color(0xFF94A3B8))
-        LogType.ERROR -> Triple(Color(0xFF7F1D1D), "ERROR", AccentRedBright)
-        LogType.INFO -> Triple(Color(0xFF0C4A6E), "INFO", SkyCyan)
+        LogType.BLOCKED -> Triple(colors.logBadgeBlockedBg, "BLOCKED", colors.logBadgeBlockedText)
+        LogType.HOOK -> Triple(colors.logBadgeHookBg, "HOOKED", colors.logBadgeHookText)
+        LogType.PASS -> Triple(colors.logBadgePassBg, "PASS", colors.logBadgePassText)
+        LogType.ERROR -> Triple(colors.logBadgeErrorBg, "ERROR", colors.logBadgeErrorText)
+        LogType.INFO -> Triple(colors.logBadgeInfoBg, "INFO", colors.logBadgeInfoText)
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF111827))
+            .background(colors.logItemContainer)
+            .border(1.dp, colors.logItemBorder, RoundedCornerShape(8.dp))
             .padding(10.dp)
     ) {
         Row(
@@ -420,7 +418,7 @@ fun LogItemView(entry: LogEntry) {
                     text = entry.time,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
-                    color = Color(0xFF64748B)
+                    color = colors.heroMutedText
                 )
             }
         }
@@ -431,7 +429,7 @@ fun LogItemView(entry: LogEntry) {
             text = entry.message,
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
-            color = Color(0xFFE2E8F0)
+            color = colors.heroSubtitleText
         )
     }
 }
@@ -453,6 +451,7 @@ fun ToolsTabContent(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val colors = AppTheme.colors
     val compInfo = remember { DeviceCompatibility.getCompatibilitySummary() }
     var commandsExpanded by remember { mutableStateOf(false) }
 
@@ -502,7 +501,7 @@ fun ToolsTabContent(
                             Icon(
                                 imageVector = Icons.Default.CloudDownload,
                                 contentDescription = null,
-                                tint = SunGold
+                                tint = colors.accentAmber
                             )
                             Text(
                                 text = stringResource(R.string.tools_updates_title),
@@ -519,7 +518,7 @@ fun ToolsTabContent(
                                 Text(
                                     text = stringResource(R.string.tools_version_latest, updateState.version),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = AccentGreen,
+                                    color = colors.accentGreen,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -593,8 +592,8 @@ fun ToolsTabContent(
                             onClick = onRequestSoftReboot,
                             enabled = !isRebooting,
                             colors = ButtonDefaults.elevatedButtonColors(
-                                containerColor = Color(0xFF7F1D1D).copy(alpha = 0.55f),
-                                contentColor = Color(0xFFFCA5A5)
+                                containerColor = colors.dangerBtnBg,
+                                contentColor = colors.dangerBtnText
                             ),
                             modifier = Modifier.testTag("soft_reboot_button")
                         ) {
@@ -687,7 +686,7 @@ fun ToolsTabContent(
                             Icon(
                                 imageVector = if (compInfo.isCompatible) Icons.Default.CheckCircle else Icons.Default.Warning,
                                 contentDescription = null,
-                                tint = if (compInfo.isCompatible) AccentGreen else SunAmber
+                                tint = if (compInfo.isCompatible) colors.accentGreen else colors.accentAmber
                             )
                             Text(
                                 text = stringResource(R.string.device_compatibility),
@@ -700,7 +699,7 @@ fun ToolsTabContent(
                             text = localizedCompatStatus,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (compInfo.isCompatible) AccentGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (compInfo.isCompatible) colors.accentGreen else MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         val deviceInfoLines = buildString {
@@ -746,7 +745,7 @@ fun ToolsTabContent(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null, tint = SunGold)
+                            Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null, tint = colors.accentAmber)
                             Text(
                                 text = stringResource(R.string.tools_report_title),
                                 style = MaterialTheme.typography.titleMedium,
@@ -819,7 +818,7 @@ fun ToolsTabContent(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Icon(Icons.Default.Terminal, contentDescription = null, tint = SkyCyan)
+                                Icon(Icons.Default.Terminal, contentDescription = null, tint = colors.accentCyan)
                                 Column {
                                     Text(
                                         text = stringResource(R.string.tools_commands_title),
@@ -848,7 +847,7 @@ fun ToolsTabContent(
                                 CommandItem(
                                     title = stringResource(R.string.cmd_1_title),
                                     desc = stringResource(R.string.cmd_1_desc),
-                                    command = "su -c \"(/data/adb/lspd/cli status || /data/adb/lsp/cli status || /data/adb/vector/cli status) 2>/dev/null; grep -ihE 'autobrightness|AutoBrightnessGuard' /data/adb/lspd/log/modules_*.log /data/adb/lspd/log/verbose_*.log /data/adb/lsp/log/*.log /data/adb/vector/log/*.log 2>/dev/null | tail -n 50\""
+                                    command = "su -c \"(/data/adb/lspd/cli status || /data/adb/lsp/cli status || /data/adb/vector/cli status) 2>/dev/null; tail -n 60 /data/system/autobrightness_guard.log 2>/dev/null; grep -ihE 'autobrightness|AutoBrightnessGuard' /data/adb/lspd/log/modules_*.log /data/adb/lspd/log/verbose_*.log /data/adb/lsp/log/*.log /data/adb/vector/log/*.log 2>/dev/null | tail -n 50\""
                                 )
                                 CommandItem(
                                     title = stringResource(R.string.cmd_2_title),
@@ -890,6 +889,7 @@ fun UpdateBannerCard(info: ReleaseInfo) {
         val existing = File(File(context.cacheDir, "updates"), targetFileName)
         mutableStateOf(if (existing.exists() && existing.length() > 1024L) existing else null)
     }
+    val colors = AppTheme.colors
     val downloadFailedMsg = stringResource(R.string.update_download_failed)
 
     Card(
@@ -897,8 +897,8 @@ fun UpdateBannerCard(info: ReleaseInfo) {
             .fillMaxWidth()
             .testTag("update_banner_card"),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E3A8A).copy(alpha = 0.35f)),
-        border = BorderStroke(1.dp, SkyCyan)
+        colors = CardDefaults.cardColors(containerColor = colors.bannerInfoBg),
+        border = BorderStroke(1.dp, colors.accentCyan)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -911,13 +911,13 @@ fun UpdateBannerCard(info: ReleaseInfo) {
                 Icon(
                     imageVector = Icons.Default.SystemUpdate,
                     contentDescription = null,
-                    tint = SkyCyan
+                    tint = colors.accentCyan
                 )
                 Text(
                     text = stringResource(R.string.update_available_fmt, info.version),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFFE0F2FE)
+                    color = colors.bannerInfoTitle
                 )
             }
 
@@ -925,13 +925,13 @@ fun UpdateBannerCard(info: ReleaseInfo) {
                 text = info.title,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFFBAE6FD)
+                color = colors.bannerInfoSubtitle
             )
 
             Text(
                 text = info.changelog.take(200) + if (info.changelog.length > 200) "..." else "",
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFE2E8F0)
+                color = colors.bannerInfoBody
             )
 
             if (isDownloading) {
@@ -944,24 +944,24 @@ fun UpdateBannerCard(info: ReleaseInfo) {
                         LinearProgressIndicator(
                             progress = { pct / 100f },
                             modifier = Modifier.fillMaxWidth(),
-                            color = SkyCyan,
-                            trackColor = Color(0xFF0F172A)
+                            color = colors.accentCyan,
+                            trackColor = colors.innerTileBorder
                         )
                         Text(
                             text = stringResource(R.string.downloading_apk_pct, pct),
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFBAE6FD)
+                            color = colors.bannerInfoSubtitle
                         )
                     } else {
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth(),
-                            color = SkyCyan,
-                            trackColor = Color(0xFF0F172A)
+                            color = colors.accentCyan,
+                            trackColor = colors.innerTileBorder
                         )
                         Text(
                             text = stringResource(R.string.downloading_apk_indet),
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFBAE6FD)
+                            color = colors.bannerInfoSubtitle
                         )
                     }
                 }
@@ -984,8 +984,8 @@ fun UpdateBannerCard(info: ReleaseInfo) {
                                 .weight(1f)
                                 .testTag("install_apk_button"),
                             colors = ButtonDefaults.elevatedButtonColors(
-                                containerColor = Color(0xFF065F46),
-                                contentColor = Color(0xFFECFDF5)
+                                containerColor = colors.installBtnBg,
+                                contentColor = colors.installBtnText
                             )
                         ) {
                             Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1052,6 +1052,7 @@ private fun CommandItem(
 ) {
     val context = LocalContext.current
     val copiedToast = stringResource(R.string.tools_cmd_copied)
+    val colors = AppTheme.colors
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
@@ -1067,10 +1068,10 @@ private fun CommandItem(
 
         Surface(
             shape = RoundedCornerShape(8.dp),
-            color = Color(0xFF0A0F1D),
+            color = colors.innerTileContainer,
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
+                .border(1.dp, colors.innerTileBorder, RoundedCornerShape(8.dp))
         ) {
             Row(
                 modifier = Modifier
@@ -1083,7 +1084,7 @@ private fun CommandItem(
                     text = command,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
-                    color = SkyCyan,
+                    color = colors.accentCyan,
                     modifier = Modifier.weight(1f)
                 )
 

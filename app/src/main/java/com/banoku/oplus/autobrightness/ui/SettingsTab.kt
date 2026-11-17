@@ -62,10 +62,7 @@ import com.banoku.oplus.autobrightness.AutoBrightnessModule
 import com.banoku.oplus.autobrightness.BrightnessMath
 import com.banoku.oplus.autobrightness.MainActivity
 import com.banoku.oplus.autobrightness.R
-import com.banoku.oplus.autobrightness.ui.theme.AccentGreen
-import com.banoku.oplus.autobrightness.ui.theme.AccentGreenBright
-import com.banoku.oplus.autobrightness.ui.theme.SkyCyan
-import com.banoku.oplus.autobrightness.ui.theme.SunGold
+import com.banoku.oplus.autobrightness.ui.theme.AppTheme
 import com.banoku.oplus.autobrightness.util.LocaleHelper
 import com.banoku.oplus.autobrightness.util.XposedBridgeClient
 import com.banoku.oplus.autobrightness.util.XposedBridgeState
@@ -82,6 +79,7 @@ fun SettingsTabContent(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    val colors = AppTheme.colors
 
     var blockReset by remember { mutableStateOf(prefs.getBoolean("pref_block_reset", true)) }
     var blockAmbient by remember { mutableStateOf(prefs.getBoolean("pref_block_ambient", true)) }
@@ -169,9 +167,9 @@ fun SettingsTabContent(
                     else -> stringResource(R.string.settings_sync_banner_fallback)
                 }
                 val bannerColor = when {
-                    xposedState.isConnected && xposedState.supportsRemotePrefs -> AccentGreenBright
-                    isRoot -> SkyCyan
-                    else -> SunGold
+                    xposedState.isConnected && xposedState.supportsRemotePrefs -> colors.accentGreen
+                    isRoot -> colors.accentCyan
+                    else -> colors.accentAmber
                 }
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -314,9 +312,9 @@ fun SettingsTabContent(
                             modeOptions.forEach { (modeKey, modeLabel, modeTag) ->
                                 val selected = floorMode == modeKey
                                 val accentColor = when (modeKey) {
-                                    "auto" -> AccentGreen
-                                    "custom" -> SunGold
-                                    else -> Color(0xFF94A3B8)
+                                    "auto" -> colors.accentGreen
+                                    "custom" -> colors.accentAmber
+                                    else -> colors.heroMutedText
                                 }
                                 Surface(
                                     modifier = Modifier
@@ -368,7 +366,7 @@ fun SettingsTabContent(
                                     text = stringResource(R.string.pref_custom_floor_title),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
-                                    color = SunGold
+                                    color = colors.accentAmber
                                 )
                                 Text(
                                     text = stringResource(R.string.pref_custom_floor_desc),
@@ -380,7 +378,7 @@ fun SettingsTabContent(
                                     style = MaterialTheme.typography.labelMedium,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold,
-                                    color = AccentGreenBright
+                                    color = colors.accentGreen
                                 )
                                 Slider(
                                     value = customMinNit,
@@ -431,7 +429,7 @@ fun SettingsTabContent(
                             style = MaterialTheme.typography.labelMedium,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            color = SkyCyan
+                            color = colors.accentCyan
                         )
                         Slider(
                             value = hysteresisScale,
@@ -545,7 +543,7 @@ fun SettingsTabContent(
                                 Icon(
                                     imageVector = Icons.Default.VisibilityOff,
                                     contentDescription = null,
-                                    tint = SunGold,
+                                    tint = colors.accentAmber,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
@@ -633,7 +631,7 @@ fun SettingsTabContent(
                             Icon(
                                 imageVector = Icons.Default.Language,
                                 contentDescription = null,
-                                tint = SunGold,
+                                tint = colors.accentAmber,
                                 modifier = Modifier.size(20.dp)
                             )
                             Column {
@@ -721,16 +719,17 @@ private fun SectionHeader(title: String) {
 
 @Composable
 fun OsCompatibilityBadge(label: String) {
+    val colors = AppTheme.colors
     Surface(
         shape = RoundedCornerShape(6.dp),
-        color = SkyCyan.copy(alpha = 0.14f)
+        color = colors.osBadgeBg
     ) {
         Text(
             text = label,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             fontSize = 10.sp,
             fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF7DD3FC),
+            color = colors.osBadgeText,
             maxLines = 1,
             softWrap = false
         )
