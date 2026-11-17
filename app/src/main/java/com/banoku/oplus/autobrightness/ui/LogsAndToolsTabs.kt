@@ -102,13 +102,16 @@ import java.io.File
 @Composable
 fun LogsTabContent(
     modifier: Modifier = Modifier,
+    initialLogs: List<LogEntry> = emptyList(),
+    isRefreshingParent: Boolean = false,
     frameworkDiagHint: String = "",
     onStatsUpdated: (GuardStats) -> Unit,
     onLogsFetched: (List<LogEntry>) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var logs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
+    var logs by remember { mutableStateOf(initialLogs) }
+    var isDemoMode by remember { mutableStateOf(false) }
     var diagHint by remember(frameworkDiagHint) { mutableStateOf(frameworkDiagHint) }
     var isLoading by remember { mutableStateOf(false) }
     var filterText by remember { mutableStateOf("") }
@@ -121,9 +124,31 @@ fun LogsTabContent(
     val logsCopied = stringResource(R.string.logs_copied_toast)
     val shareChooserTitle = stringResource(R.string.logs_share_chooser)
 
-    var statusMessage by remember(statusInitial) { mutableStateOf(statusInitial) }
+    var statusMessage by remember(statusInitial) {
+        mutableStateOf(
+            when {
+                initialLogs.isNotEmpty() -> String.format(statusLoadedFmt, initialLogs.size)
+                isRefreshingParent -> statusReading
+                else -> statusInitial
+            }
+        )
+    }
+
+    LaunchedEffect(initialLogs, isRefreshingParent) {
+        if (isDemoMode) return@LaunchedEffect
+        if (initialLogs.isNotEmpty()) {
+            logs = initialLogs
+            diagHint = ""
+            statusMessage = String.format(statusLoadedFmt, initialLogs.size)
+        } else if (isRefreshingParent) {
+            statusMessage = statusReading
+        }
+    }
 
     LaunchedEffect(Unit) {
+        if (initialLogs.isNotEmpty() || isRefreshingParent) return@LaunchedEffect
+        isLoading = true
+        statusMessage = statusReading
         val fetched = RootHelper.readModuleLogs()
         if (fetched.isNotEmpty()) {
             logs = fetched
@@ -134,10 +159,11 @@ fun LogsTabContent(
             statusMessage = String.format(statusLoadedFmt, fetched.size)
         } else {
             statusMessage = statusEmpty
-            if (diagHint.isBlank() && (RootHelper.isRootAvailable() || RootHelper.checkRootAccess())) {
+            if (diagHint.isBlank() && RootHelper.checkRootAccess()) {
                 diagHint = RootHelper.readFrameworkDiagnosticHint()
             }
         }
+        isLoading = false
     }
 
     Box(
@@ -205,6 +231,7 @@ fun LogsTabContent(
             ) {
                 ElevatedButton(
                     onClick = {
+                        isDemoMode = false
                         isLoading = true
                         statusMessage = statusReading
                         scope.launch {
@@ -219,7 +246,7 @@ fun LogsTabContent(
                             } else {
                                 logs = emptyList()
                                 statusMessage = statusEmpty
-                                if (RootHelper.isRootAvailable() || RootHelper.checkRootAccess()) {
+                                if (RootHelper.checkRootAccess()) {
                                     diagHint = RootHelper.readFrameworkDiagnosticHint()
                                 }
                             }
@@ -234,7 +261,7 @@ fun LogsTabContent(
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 ) {
-                    if (isLoading) {
+                    if (isLoading || isRefreshingParent) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     } else {
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -245,6 +272,7 @@ fun LogsTabContent(
 
                 OutlinedButton(
                     onClick = {
+                        isDemoMode = true
                         logs = RootHelper.getSampleSimulationLogs()
                         statusMessage = statusDemo
                     },
@@ -820,12 +848,12 @@ fun ToolsTabContent(
                                 CommandItem(
                                     title = stringResource(R.string.cmd_1_title),
                                     desc = stringResource(R.string.cmd_1_desc),
-                                    command = "su -c 'for f in \$(ls -t /data/adb/vector/log/*.log /data/adb/lsp/log/*.log /data/adb/lspd/log/*.log /data/adb/*/log/*.log 2>/dev/null | head -n 3); do [ -r \"\$f\" ] && grep -i AutoBrightnessGuard \"\$f\"; done'"
+                                    command = "su -c \"(/data/adb/lspd/cli status || /data/adb/lsp/cli status || /data/adb/vector/cli status) 2>/dev/null; grep -ihE 'autobrightness|AutoBrightnessGuard' /data/adb/lspd/log/modules_*.log /data/adb/lspd/log/verbose_*.log /data/adb/lsp/log/*.log /data/adb/vector/log/*.log 2>/dev/null | tail -n 50\""
                                 )
                                 CommandItem(
                                     title = stringResource(R.string.cmd_2_title),
                                     desc = stringResource(R.string.cmd_2_desc),
-                                    command = "su -c \"logcat -d -b all | grep -i AutoBrightnessGuard\""
+                                    command = "su -c \"logcat -d -b main -b system -b crash -s AutoBrightnessGuard:V | tail -n 80\""
                                 )
                                 CommandItem(
                                     title = stringResource(R.string.cmd_3_title),

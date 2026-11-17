@@ -12,6 +12,7 @@
 
     <!-- Шапка і бейджі підключення -->
     <string name="header_ipc_zero_root">Vector IPC</string>
+    <string name="header_ipc_xposed_zero_root">%1$s IPC</string>
     <string name="header_ipc_root">Root • SU</string>
     <string name="header_ipc_unlinked">Модуль вимк</string>
     <string name="status_framework">Системний фреймворк (android)</string>
@@ -142,7 +143,7 @@
     <string name="lang_ru">Русский</string>
     <string name="lang_en">English</string>
     <string name="lang_uk">Українська</string>
-    <string name="settings_sync_banner_vector">Синхронізація через Vector / LibXposed RemotePreferences (Zero-Root IPC) + резервно в SystemProperties.</string>
+    <string name="settings_sync_banner_vector">Синхронізація через %1$s RemotePreferences (Zero-Root IPC) + резервно в SystemProperties.</string>
     <string name="settings_sync_banner_root">Синхронізація на льоту через Root SystemProperties (persist.autobrightness.*). Хуки зчитують зміни миттєво.</string>
     <string name="settings_sync_banner_fallback">Збережено локально. Увімкніть модуль у Vector/LSPosed або надайте root для передачі налаштувань у system_server.</string>
     <string name="toast_applied_live">Застосовано на льоту без перезавантаження</string>
@@ -210,10 +211,10 @@
     <string name="tools_commands_subtitle">Натисніть, щоб розгорнути список діагностичних команд</string>
     <string name="tools_cmd_copy">Копія</string>
     <string name="tools_cmd_copied">Команду скопійовано</string>
-    <string name="cmd_1_title">1. Найсвіжіший лог Vector / LSPosed</string>
-    <string name="cmd_1_desc">Читає останній файл журналу Vector або LSPosed із хуками та статистикою.</string>
-    <string name="cmd_2_title">2. Лог через logcat (усі буфери)</string>
-    <string name="cmd_2_desc">Читає всі системні буфери logcat, включно із system_server та фреймворком.</string>
+    <string name="cmd_1_title">1. Статус Vector CLI і лог фреймворку</string>
+    <string name="cmd_1_desc">Перевіряє статус Vector/LSPosed CLI та читає завантаження модуля з modules_*.log / verbose_*.log.</string>
+    <string name="cmd_2_title">2. Швидкий лог модуля в logcat</string>
+    <string name="cmd_2_desc">Виводить події AutoBrightnessGuard з буферів main, system і crash без зависання на -b all.</string>
     <string name="cmd_3_title">3. Стан контролера і калібрування</string>
     <string name="cmd_3_desc">Дамп таблиці BrightnessModel і контролера OplusAutomaticBrightnessController.</string>
     <string name="cmd_4_title">4. Перевірка властивостей SystemProperties</string>

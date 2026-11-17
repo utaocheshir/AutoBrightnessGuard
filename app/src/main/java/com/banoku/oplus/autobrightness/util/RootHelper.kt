@@ -7,13 +7,17 @@ import android.net.Uri
 import android.os.Build
 import com.banoku.oplus.autobrightness.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.File
+import java.io.IOException
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 object RootHelper {
@@ -34,15 +38,35 @@ object RootHelper {
         "/data/local/su"
     )
 
+    // Ordered candidates for exec() probing across Magisk/Alpha/Kitsune, KSU/KSUN/SukiSU/BakaSU, APatch
+    private val SU_EXEC_CANDIDATES = arrayOf(
+        "su",
+        "/debug_ramdisk/su",
+        "/sbin/su",
+        "/data/adb/ksu/bin/su",
+        "/data/adb/ap/bin/su",
+        "/system/bin/su",
+        "/system/xbin/su",
+        "/vendor/bin/su",
+        "/su/bin/su"
+    )
+
     private const val MODULE_LOG_CANDIDATES =
-        "/data/adb/vector/log/*.log /data/adb/lsp/log/*.log /data/adb/lspd/log/*.log " +
-            "/data/adb/vector/log.old/*.log /data/adb/lsp/log.old/*.log /data/adb/lspd/log.old/*.log " +
-            "/data/adb/*/log/*.log"
+        "/data/adb/lspd/log/modules_*.log /data/adb/lspd/log/verbose_*.log " +
+            "/data/adb/lsp/log/modules_*.log /data/adb/lsp/log/verbose_*.log " +
+            "/data/adb/vector/log/modules_*.log /data/adb/vector/log/verbose_*.log " +
+            "/data/adb/lspd/log.old/modules_*.log"
 
     private const val MODULE_BOOT_PATTERN =
         "AutoBrightnessGuard.*(onModuleLoaded|starting, sdk=|Hook \\[|HOOK_SUMMARY:|STOCK_CURVE:|BLOCKED |GUARD_STATS:)"
 
+    private val suProbeMutex = Mutex()
+
+    @Volatile
+    private var cachedSuBinary: String? = null
+
     fun isRootAvailable(): Boolean {
+        if (cachedSuBinary != null) return true
         for (path in SU_CANDIDATE_PATHS) {
             if (File(path).exists()) return true
         }
@@ -56,74 +80,138 @@ object RootHelper {
     /**
      * Authoritative runtime root check across Magisk (incl. Alpha/Kitsune), KernelSU,
      * KernelSU-Next, BakaSU (SuSFS), SukiSU, and APatch via actual `su -c id -u`.
+     * Caches the first working su binary so subsequent commands never re-trigger prompts or redundant probes.
      */
-    suspend fun checkRootAccess(): Boolean = withContext(Dispatchers.IO) {
-        val res = executeSuCommand("id -u")
-        if (res.success && res.output.trim() == "0") {
-            return@withContext true
-        }
-        for (bin in listOf("/debug_ramdisk/su", "/data/adb/ksu/bin/su", "/data/adb/ap/bin/su", "/system/bin/su", "/sbin/su")) {
-            if (File(bin).exists()) {
-                val fallback = executeSuBinaryCommand(bin, "id -u")
-                if (fallback.success && fallback.output.trim() == "0") {
-                    return@withContext true
-                }
-            }
-        }
-        false
+    suspend fun checkRootAccess(forceRefresh: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+        ensureSuBinary(forceRefresh) != null
     }
 
+    private suspend fun ensureSuBinary(forceRefresh: Boolean = false): String? = suProbeMutex.withLock {
+        val current = if (!forceRefresh) cachedSuBinary else null
+        if (current != null) {
+            val check = executeSuBinaryCommand(current, "id -u")
+            if (check.success && check.output.trim() == "0") {
+                return@withLock current
+            }
+            cachedSuBinary = null
+        }
+
+        for (bin in SU_EXEC_CANDIDATES) {
+            // Do not pre-gate top candidates on File.exists() because SUSFS / KSU mount hiding
+            // can hide `su` from stat() while execve() still succeeds cleanly.
+            val check = executeSuBinaryCommand(bin, "id -u")
+            if (check.success && check.output.trim() == "0") {
+                cachedSuBinary = bin
+                return@withLock bin
+            }
+        }
+        null
+    }
+
+    private data class ExecOutcome(
+        val result: CommandResult,
+        val ioMissing: Boolean = false
+    )
+
     private fun executeSuBinaryCommand(suBinary: String, cmd: String): CommandResult {
+        return executeSuBinaryOutcome(suBinary, cmd).result
+    }
+
+    private fun executeSuBinaryOutcome(suBinary: String, cmd: String): ExecOutcome {
+        var process: Process? = null
         return try {
-            val process = Runtime.getRuntime().exec(arrayOf(suBinary, "-c", cmd))
-            // Close stdin immediately so commands like `cat` or `grep` can never hang on empty args
+            process = Runtime.getRuntime().exec(arrayOf(suBinary, "-c", cmd))
             try {
                 process.outputStream.close()
             } catch (_: Throwable) {
             }
-            val output = StringBuilder()
-            val error = StringBuilder()
 
+            val error = StringBuilder()
+            val errThread = Thread {
+                try {
+                    BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            if (error.length < 4096) {
+                                error.append(line).append('\n')
+                            }
+                        }
+                    }
+                } catch (_: Throwable) {
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+
+            val output = StringBuilder()
             BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
-                    output.append(line).append("\n")
+                    output.append(line).append('\n')
                 }
             }
 
-            BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    error.append(line).append("\n")
-                }
+            val finished = process.waitFor(8, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                return ExecOutcome(
+                    CommandResult(
+                        success = false,
+                        output = output.toString().trim(),
+                        error = "Timed out after 8s"
+                    )
+                )
             }
-
-            val exitCode = process.waitFor()
-            CommandResult(
-                success = exitCode == 0,
-                output = output.toString().trim(),
-                error = error.toString().trim()
+            try {
+                errThread.join(250)
+            } catch (_: Throwable) {
+            }
+            val exitCode = process.exitValue()
+            ExecOutcome(
+                CommandResult(
+                    success = exitCode == 0,
+                    output = output.toString().trim(),
+                    error = error.toString().trim()
+                )
+            )
+        } catch (e: IOException) {
+            process?.destroyForcibly()
+            ExecOutcome(
+                CommandResult(
+                    success = false,
+                    output = "",
+                    error = e.message ?: "su binary unavailable"
+                ),
+                ioMissing = true
             )
         } catch (t: Throwable) {
-            CommandResult(
-                success = false,
-                output = "",
-                error = t.message ?: "Execution failed"
+            process?.destroyForcibly()
+            ExecOutcome(
+                CommandResult(
+                    success = false,
+                    output = "",
+                    error = t.message ?: "Execution failed"
+                )
             )
         }
     }
 
     suspend fun executeSuCommand(cmd: String): CommandResult = withContext(Dispatchers.IO) {
-        val direct = executeSuBinaryCommand("su", cmd)
-        if (direct.success || direct.output.isNotEmpty()) {
-            return@withContext direct
+        val resolved = cachedSuBinary ?: ensureSuBinary(forceRefresh = false)
+        if (resolved == null) {
+            // One direct attempt with "su" in case manager granted just now
+            val direct = executeSuBinaryOutcome("su", cmd)
+            return@withContext direct.result
         }
-        for (bin in listOf("/debug_ramdisk/su", "/data/adb/ksu/bin/su", "/data/adb/ap/bin/su")) {
-            if (File(bin).exists()) {
-                return@withContext executeSuBinaryCommand(bin, cmd)
-            }
+
+        val outcome = executeSuBinaryOutcome(resolved, cmd)
+        if (outcome.ioMissing) {
+            cachedSuBinary = null
+            val reResolved = ensureSuBinary(forceRefresh = true) ?: return@withContext outcome.result
+            return@withContext executeSuBinaryOutcome(reResolved, cmd).result
         }
-        direct
+        outcome.result
     }
 
     suspend fun launchLsposedManager(context: Context) = withContext(Dispatchers.IO) {
@@ -177,15 +265,25 @@ object RootHelper {
     }
 
     suspend fun setSystemProperty(key: String, enabled: Boolean): Boolean {
-        val valStr = if (enabled) "1" else "0"
-        val res = executeSuCommand("setprop $key $valStr")
-        return res.success
+        return setSystemPropertiesBatch(mapOf(key to if (enabled) "1" else "0"))
     }
 
     suspend fun setSystemPropertyString(key: String, value: String): Boolean {
-        val safeVal = value.replace("'", "'\\''")
-        val res = executeSuCommand("setprop $key '$safeVal'")
-        return res.success
+        return setSystemPropertiesBatch(mapOf(key to value))
+    }
+
+    /**
+     * Writes multiple persist.autobrightness.* properties in ONE single `su -c` shell call,
+     * eliminating Magisk root toast storms and startup multi-second latency.
+     */
+    suspend fun setSystemPropertiesBatch(props: Map<String, String>): Boolean = withContext(Dispatchers.IO) {
+        if (props.isEmpty()) return@withContext true
+        val script = props.entries.joinToString("; ") { (rawKey, rawVal) ->
+            val safeKey = rawKey.trim()
+            val safeVal = rawVal.replace("'", "'\\''")
+            "setprop $safeKey '$safeVal'"
+        }
+        executeSuCommand(script).success
     }
 
     suspend fun getSystemPropertyString(key: String, defaultValue: String = ""): String {
@@ -193,77 +291,58 @@ object RootHelper {
         return if (res.success && res.output.isNotBlank()) res.output.trim() else defaultValue
     }
 
+    /**
+     * Single-pass fast module log reader supporting both:
+     * - Vector Framework 2.2 (XposedInterface.log -> Android logd via `logcat -d -b main -b system -b crash -s AutoBrightnessGuard:V`
+     *   plus `modules_*.log` for `Loaded module com.banoku.oplus.autobrightness`)
+     * - LSPosed / ReLSPosed (`/data/adb/lspd/log/modules_*.log` & `logcat`)
+     */
     suspend fun readModuleLogs(): List<LogEntry> = withContext(Dispatchers.IO) {
-        // 1. Check the 3 most recent Vector / LSPosed / ReLSPosed log files safely (e.g. modules_*.log + verbose_*.log).
-        // Pinned grep preserves boot summary, hook status, STOCK_CURVE, BLOCKED resets & GUARD_STATS across long uptime.
-        val latestCmd =
-            "for f in \$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 3); do " +
-                "if [ -r \"\$f\" ]; then " +
-                "grep -iE '$MODULE_BOOT_PATTERN' \"\$f\" 2>/dev/null | tail -n 50; " +
-                "grep -i AutoBrightnessGuard \"\$f\" 2>/dev/null | tail -n 150; " +
-                "fi; done"
-        var result = executeSuCommand(latestCmd)
-        if (result.output.isNotBlank()) {
-            return@withContext parseLogs(result.output).reversed()
+        val singlePassCmd = buildString {
+            // 1. Check Vector/LSPosed module logs (fast small files, skipping huge kmsg.log / props.txt)
+            append("for f in \$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 4); do ")
+            append("if [ -r \"\$f\" ]; then ")
+            append("grep -iE '$MODULE_BOOT_PATTERN|Loaded module com\\.banoku\\.oplus\\.autobrightness' \"\$f\" 2>/dev/null | tail -n 60; ")
+            append("grep -i AutoBrightnessGuard \"\$f\" 2>/dev/null | tail -n 150; ")
+            append("fi; done; ")
+            // 2. Native tag-filtered logcat (main, system, crash — avoids slow/restricted `-b all`)
+            append("logcat -d -b main -b system -b crash -s AutoBrightnessGuard:V 2>/dev/null | tail -n 300")
         }
-
-        // 2. Fallback across all rotated Vector / LSPosed log files
-        val wildcardCmd =
-            "grep -ihE '$MODULE_BOOT_PATTERN' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 50; " +
-                "grep -ih AutoBrightnessGuard $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 150"
-        result = executeSuCommand(wildcardCmd)
+        val result = executeSuCommand(singlePassCmd)
         if (result.output.isNotBlank()) {
-            return@withContext parseLogs(result.output).reversed()
+            val parsed = parseLogs(result.output)
+            if (parsed.isNotEmpty()) {
+                return@withContext parsed.reversed()
+            }
         }
-
-        // 3. Logcat across all buffers via grep (catches AutoBrightnessGuard across system_server)
-        val logcatGrepCmd =
-            "logcat -d -b all 2>/dev/null | grep -iE '$MODULE_BOOT_PATTERN' | tail -n 50; " +
-                "logcat -d -b all 2>/dev/null | grep -i AutoBrightnessGuard | tail -n 150"
-        result = executeSuCommand(logcatGrepCmd)
-        if (result.output.isNotBlank()) {
-            return@withContext parseLogs(result.output).reversed()
-        }
-
-        // 4. Direct logcat tag filter fallback
-        result = executeSuCommand("logcat -d -b all -s AutoBrightnessGuard:V 2>/dev/null | tail -n 150")
-        if (result.output.isNotBlank()) {
-            return@withContext parseLogs(result.output).reversed()
-        }
-
         emptyList()
     }
 
     suspend fun readFrameworkDiagnosticHint(): String = withContext(Dispatchers.IO) {
         val diagCmd =
-            "logs=\$(ls -1t /data/adb/vector/log/*.log /data/adb/lsp/log/*.log /data/adb/lspd/log/*.log 2>/dev/null | head -n 4); " +
+            "(/data/adb/lspd/cli status 2>/dev/null || /data/adb/lsp/cli status 2>/dev/null || /data/adb/vector/cli status 2>/dev/null) | head -n 12; " +
+                "logs=\$(ls -1t /data/adb/lspd/log/*.log /data/adb/lsp/log/*.log /data/adb/vector/log/*.log 2>/dev/null | head -n 4); " +
                 "if [ -n \"\$logs\" ]; then " +
-                "echo \"Logs: \$(echo \"\$logs\" | tr '\\n' ' ')\"; " +
                 "grep -ihE 'autobrightness|AutoBrightnessGuard|BRIDGE_TRANSACTION|system_server.*(fail|error|skip|deny|not)|not injected' " +
-                "/data/adb/vector/log/*.log /data/adb/lsp/log/*.log /data/adb/lspd/log/*.log 2>/dev/null | tail -n 8; " +
-                "else echo 'Logs: none found in /data/adb/{vector,lsp,lspd}/log'; fi; " +
+                "/data/adb/lspd/log/modules_*.log /data/adb/lspd/log/verbose_*.log /data/adb/lsp/log/*.log /data/adb/vector/log/*.log 2>/dev/null | tail -n 6; " +
+                "else echo 'Logs: none found in /data/adb/{lspd,lsp,vector}/log'; fi; " +
                 "ps -A 2>/dev/null | grep -E 'vectord|lspd' | head -n 2"
         val res = executeSuCommand(diagCmd)
         if (res.output.isBlank()) return@withContext ""
         res.output.lineSequence()
             .map { it.trim() }
             .filter { it.isNotBlank() }
-            .take(10)
+            .take(12)
             .joinToString("\n")
     }
 
     suspend fun readLatestStockCurveFromLogs(): List<Float>? = withContext(Dispatchers.IO) {
-        val cmds = listOf(
-            "f=\$(ls -t $MODULE_LOG_CANDIDATES 2>/dev/null | head -n 1); [ -n \"\$f\" ] && grep -F 'STOCK_CURVE:' \"\$f\" 2>/dev/null | tail -n 1",
-            "grep -Fh 'STOCK_CURVE:' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 1",
-            "logcat -d -b all 2>/dev/null | grep -i AutoBrightnessGuard | grep -F 'STOCK_CURVE:' | tail -n 1"
-        )
-        for (cmd in cmds) {
-            val res = executeSuCommand(cmd)
-            if (res.output.isNotBlank()) {
-                val parsed = extractLatestStockCurve(parseLogs(res.output))
-                if (parsed != null) return@withContext parsed
-            }
+        val cmd =
+            "grep -Fh 'STOCK_CURVE:' $MODULE_LOG_CANDIDATES 2>/dev/null | tail -n 1; " +
+                "logcat -d -b main -b system -b crash -s AutoBrightnessGuard:V 2>/dev/null | grep -F 'STOCK_CURVE:' | tail -n 1"
+        val res = executeSuCommand(cmd)
+        if (res.output.isNotBlank()) {
+            return@withContext extractLatestStockCurve(parseLogs(res.output).reversed())
         }
         null
     }
@@ -1033,7 +1112,10 @@ object RootHelper {
             HookStatusItem(id = id, name = title, state = state, details = baseDetail, runtimeHits = hits)
         }
 
-        val detected = startEntry != null || stateMap.isNotEmpty()
+        val hasLoadedInModuleManager = session.any {
+            it.message.contains("Loaded module com.banoku.oplus.autobrightness", ignoreCase = true)
+        }
+        val detected = startEntry != null || stateMap.isNotEmpty() || hasLoadedInModuleManager
         val installedCount = items.count { it.state == HookState.INSTALLED }
         val mismatch = loadedVersion.isNotEmpty() && !loadedVersion.equals(expectedVersion, ignoreCase = true)
 
@@ -1054,7 +1136,8 @@ object RootHelper {
 
     fun parseLogs(raw: String): List<LogEntry> {
         return raw.lineSequence()
-            .filter { it.isNotBlank() }
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.startsWith("--------- beginning of ") }
             .distinct()
             .map { line ->
                 val cleaned = cleanLogMessage(line)
@@ -1070,6 +1153,9 @@ object RootHelper {
                     time = extractTime(line),
                     message = cleaned
                 )
+            }
+            .distinctBy { entry ->
+                if (entry.time.isNotEmpty()) entry.time to entry.message else entry.message
             }
             .toList()
     }
@@ -1091,6 +1177,16 @@ object RootHelper {
         return ""
     }
 
+    private fun stripPackagePrefix(msg: String): String {
+        val trimmed = msg.trim()
+        val pkgPrefix = "com.banoku.oplus.autobrightness:"
+        return if (trimmed.startsWith(pkgPrefix)) {
+            trimmed.substring(pkgPrefix.length).trim()
+        } else {
+            trimmed
+        }
+    }
+
     fun cleanLogMessage(line: String): String {
         val guardIdx = line.indexOf("AutoBrightnessGuard")
         if (guardIdx != -1) {
@@ -1099,15 +1195,23 @@ object RootHelper {
             val afterBracket = line.indexOf(']', guardIdx)
             val nextOpen = line.indexOf('[', guardIdx)
             if (afterBracket != -1 && (nextOpen == -1 || nextOpen > afterBracket) && afterBracket + 1 < line.length) {
-                return line.substring(afterBracket + 1).trim()
+                return stripPackagePrefix(line.substring(afterBracket + 1))
             }
             // 2. Logcat prefix: `11-14 20:08:47.276 1000 28821 28821 W AutoBrightnessGuard: <message>`
             val afterColon = line.indexOf(':', guardIdx + "AutoBrightnessGuard".length)
             if (afterColon != -1 && afterColon + 1 < line.length) {
-                return line.substring(afterColon + 1).trim()
+                return stripPackagePrefix(line.substring(afterColon + 1))
             }
         }
-        return line.trim()
+        // 3. VectorModuleManager / VectorLegacyBridge bracketed lines
+        val vecIdx = line.indexOf("VectorModuleManager")
+        if (vecIdx != -1) {
+            val afterBracket = line.indexOf(']', vecIdx)
+            if (afterBracket != -1 && afterBracket + 1 < line.length) {
+                return line.substring(afterBracket + 1).trim()
+            }
+        }
+        return stripPackagePrefix(line)
     }
 }
 

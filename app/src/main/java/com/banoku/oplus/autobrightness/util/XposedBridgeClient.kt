@@ -148,8 +148,12 @@ object XposedBridgeClient {
             ?.putLong(AutoBrightnessModule.PREF_SYNC_TS, ts)
             ?.apply()
         withContext(Dispatchers.IO) {
-            RootHelper.setSystemProperty(propKey, value)
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
+            RootHelper.setSystemPropertiesBatch(
+                mapOf(
+                    propKey to if (value) "1" else "0",
+                    AutoBrightnessModule.PROP_SYNC_TS to ts.toString()
+                )
+            )
         }
     }
 
@@ -166,8 +170,12 @@ object XposedBridgeClient {
             ?.putLong(AutoBrightnessModule.PREF_SYNC_TS, ts)
             ?.apply()
         withContext(Dispatchers.IO) {
-            RootHelper.setSystemPropertyString(propKey, value)
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
+            RootHelper.setSystemPropertiesBatch(
+                mapOf(
+                    propKey to value,
+                    AutoBrightnessModule.PROP_SYNC_TS to ts.toString()
+                )
+            )
         }
     }
 
@@ -187,8 +195,12 @@ object XposedBridgeClient {
             ?.apply()
         val propVal = String.format(Locale.US, "%.1f", clamped)
         withContext(Dispatchers.IO) {
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_HYSTERESIS, propVal)
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
+            RootHelper.setSystemPropertiesBatch(
+                mapOf(
+                    AutoBrightnessModule.PROP_HYSTERESIS to propVal,
+                    AutoBrightnessModule.PROP_SYNC_TS to ts.toString()
+                )
+            )
         }
     }
 
@@ -219,9 +231,13 @@ object XposedBridgeClient {
             "0"
         }
         withContext(Dispatchers.IO) {
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, isAuto)
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, customPropStr)
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
+            RootHelper.setSystemPropertiesBatch(
+                mapOf(
+                    AutoBrightnessModule.PROP_MIN_FLOOR to if (isAuto) "1" else "0",
+                    AutoBrightnessModule.PROP_CUSTOM_MIN_NIT to customPropStr,
+                    AutoBrightnessModule.PROP_SYNC_TS to ts.toString()
+                )
+            )
         }
     }
 
@@ -245,9 +261,13 @@ object XposedBridgeClient {
 
         val propVal = String.format(Locale.US, "%.1f", clamped)
         withContext(Dispatchers.IO) {
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, false)
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, propVal)
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, ts.toString())
+            RootHelper.setSystemPropertiesBatch(
+                mapOf(
+                    AutoBrightnessModule.PROP_MIN_FLOOR to "0",
+                    AutoBrightnessModule.PROP_CUSTOM_MIN_NIT to propVal,
+                    AutoBrightnessModule.PROP_SYNC_TS to ts.toString()
+                )
+            )
         }
     }
 
@@ -307,7 +327,7 @@ object XposedBridgeClient {
     /**
      * Synchronizes ALL settings from local SharedPreferences into both:
      * 1) LibXposed RemotePreferences (zero-root Vector/LSPosed IPC), and
-     * 2) Android SystemProperties (live override & fallback across root/boot).
+     * 2) Android SystemProperties (live override & fallback across root/boot in ONE batched `su -c` call).
      */
     suspend fun syncAllFromLocalPrefs(localPrefs: SharedPreferences, hasRoot: Boolean) {
         val syncTs = System.currentTimeMillis()
@@ -321,36 +341,34 @@ object XposedBridgeClient {
             val hysteresis = localPrefs.getFloat("pref_hysteresis_scale", BrightnessMath.DEFAULT_HYSTERESIS_SCALE)
                 .coerceIn(BrightnessMath.MIN_HYSTERESIS_SCALE, BrightnessMath.MAX_HYSTERESIS_SCALE)
             val curve = localPrefs.getString("pref_curve_config", "").orEmpty()
-
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_BLOCK_RESET, localPrefs.getBoolean("pref_block_reset", true))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_BLOCK_AMBIENT, localPrefs.getBoolean("pref_block_ambient", true))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_STRICT_ALARM, localPrefs.getBoolean("pref_strict_alarm", false))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_VERBOSE_LOG, localPrefs.getBoolean("pref_verbose_log", false))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_STABILITY_GUARD, localPrefs.getBoolean("pref_stability_guard", true))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_MIN_FLOOR, isAutoFloor)
             val customPropStr = if (effectiveCustomNit >= 0.5f) {
                 String.format(Locale.US, "%.1f", effectiveCustomNit)
             } else {
                 "0"
             }
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CUSTOM_MIN_NIT, customPropStr)
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DEBOUNCE_LOCK, localPrefs.getBoolean("pref_debounce_lock", true))
-            RootHelper.setSystemPropertyString(
-                AutoBrightnessModule.PROP_HYSTERESIS,
-                String.format(Locale.US, "%.1f", hysteresis)
+            fun b(key: String, def: Boolean) = if (localPrefs.getBoolean(key, def)) "1" else "0"
+
+            val batch = linkedMapOf(
+                AutoBrightnessModule.PROP_BLOCK_RESET to b("pref_block_reset", true),
+                AutoBrightnessModule.PROP_BLOCK_AMBIENT to b("pref_block_ambient", true),
+                AutoBrightnessModule.PROP_STRICT_ALARM to b("pref_strict_alarm", false),
+                AutoBrightnessModule.PROP_VERBOSE_LOG to b("pref_verbose_log", false),
+                AutoBrightnessModule.PROP_STABILITY_GUARD to b("pref_stability_guard", true),
+                AutoBrightnessModule.PROP_MIN_FLOOR to if (isAutoFloor) "1" else "0",
+                AutoBrightnessModule.PROP_CUSTOM_MIN_NIT to customPropStr,
+                AutoBrightnessModule.PROP_DEBOUNCE_LOCK to b("pref_debounce_lock", true),
+                AutoBrightnessModule.PROP_HYSTERESIS to String.format(Locale.US, "%.1f", hysteresis),
+                AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING to b("pref_disable_smart_dimming", true),
+                AutoBrightnessModule.PROP_DUAL_SENSOR_GUARD to b("pref_dual_sensor_guard", true),
+                AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR to b("pref_disable_main_sensor", false),
+                AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR to b("pref_disable_aux_sensor", false),
+                AutoBrightnessModule.PROP_DISABLE_PWM_SENSOR to b("pref_disable_pwm_sensor", false),
+                AutoBrightnessModule.PROP_SYNC_TS to syncTs.toString()
             )
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING, localPrefs.getBoolean("pref_disable_smart_dimming", true))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DUAL_SENSOR_GUARD, localPrefs.getBoolean("pref_dual_sensor_guard", true))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR, localPrefs.getBoolean("pref_disable_main_sensor", false))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR, localPrefs.getBoolean("pref_disable_aux_sensor", false))
-            RootHelper.setSystemProperty(AutoBrightnessModule.PROP_DISABLE_PWM_SENSOR, localPrefs.getBoolean("pref_disable_pwm_sensor", false))
             if (curve.isNotEmpty()) {
-                val currentProp = RootHelper.getSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, "")
-                if (currentProp != curve) {
-                    RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_CURVE_CONFIG, curve)
-                }
+                batch[AutoBrightnessModule.PROP_CURVE_CONFIG] = curve
             }
-            RootHelper.setSystemPropertyString(AutoBrightnessModule.PROP_SYNC_TS, syncTs.toString())
+            RootHelper.setSystemPropertiesBatch(batch)
         }
     }
 }

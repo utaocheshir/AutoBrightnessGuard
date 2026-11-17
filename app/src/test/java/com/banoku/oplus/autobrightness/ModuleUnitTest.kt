@@ -246,6 +246,28 @@ class ModuleUnitTest {
         assertTrue(loadOnlyStatus.moduleDetected)
         assertEquals("1.5.0", loadOnlyStatus.loadedVersion)
         assertEquals(0, loadOnlyStatus.installedCount)
+
+        // Real Vector 2.2 XposedInterface.log() output inside Android logcat prepends packageName
+        val realVectorLogcat = listOf(
+            "[ 2026-11-16T12:53:15.111 1000: 3743: 3743 D/VectorModuleManager ] Loaded module com.banoku.oplus.autobrightness successfully.",
+            "11-16 13:46:23.913  3743  4156 I AutoBrightnessGuard: com.banoku.oplus.autobrightness: GUARD_STATS:reset=0,ambient=0,drift=1556,debounce=0,floor=43,darkenv=468,dimming=0,aux=48,hyst=0,curve=82,pwm=0,last_block_ms=0"
+        ).joinToString("\n")
+        val realEntries = RootHelper.parseLogs(realVectorLogcat).reversed()
+        assertEquals(2, realEntries.size)
+        assertEquals(
+            "GUARD_STATS:reset=0,ambient=0,drift=1556,debounce=0,floor=43,darkenv=468,dimming=0,aux=48,hyst=0,curve=82,pwm=0,last_block_ms=0",
+            realEntries.first().message
+        )
+        assertEquals("Loaded module com.banoku.oplus.autobrightness successfully.", realEntries.last().message)
+        val vecStats = RootHelper.computeStats(realEntries)
+        assertEquals(1556, vecStats.antiDriftCount)
+        assertEquals(43 + 468, vecStats.floorAndDarkEnvCount)
+        assertEquals(82, vecStats.customCurveCount)
+        assertEquals(48, vecStats.stabilityAndSensorsCount)
+
+        // Even if logd rotated out HOOK_SUMMARY, VectorModuleManager load keeps moduleDetected = true
+        val vecRuntime = RootHelper.parseModuleRuntimeStatus(realEntries, "1.5.0")
+        assertTrue(vecRuntime.moduleDetected)
     }
 
     @Test

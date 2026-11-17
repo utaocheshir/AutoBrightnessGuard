@@ -50,6 +50,8 @@ import com.banoku.oplus.autobrightness.util.RootHelper
 import com.banoku.oplus.autobrightness.util.UpdateChecker
 import com.banoku.oplus.autobrightness.util.UpdateResult
 import com.banoku.oplus.autobrightness.util.XposedBridgeClient
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -84,6 +86,7 @@ fun MainAppScreen() {
         val cached = prefs.getString("pref_stock_curve_cache", "").orEmpty()
         mutableStateOf(BrightnessMath.parseNitArray(cached)?.toList())
     }
+    var moduleLogs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
     var displayCalibration by remember { mutableStateOf<DisplayCalibration?>(null) }
     var isRefreshingStatus by remember { mutableStateOf(false) }
     var isRootAvailable by remember { mutableStateOf(RootHelper.isRootAvailable()) }
@@ -102,6 +105,7 @@ fun MainAppScreen() {
     }
 
     fun applyLogsToRuntimeState(logs: List<LogEntry>): Boolean {
+        moduleLogs = logs
         var foundStock = false
         if (logs.isNotEmpty()) {
             frameworkDiagHint = ""
@@ -119,58 +123,51 @@ fun MainAppScreen() {
         return foundStock
     }
 
-    suspend fun refreshCalibrationAndStock(foundStockInTail: Boolean) {
-        val hasRoot = isRootAvailable || RootHelper.checkRootAccess()
-        isRootAvailable = hasRoot
-        if (!hasRoot) return
-        val cal = RootHelper.readLiveDisplayCalibration()
-        displayCalibration = cal
-        if (!foundStockInTail) {
-            val deepStock = RootHelper.readLatestStockCurveFromLogs()
-            val resolvedStock = deepStock ?: cal.romCurveNits
-            if (resolvedStock != null) {
-                cacheStockCurve(resolvedStock)
-            }
-        }
-    }
-
-    fun refreshRuntimeState() {
-        scope.launch {
-            isRefreshingStatus = true
-            val hasRoot = RootHelper.checkRootAccess() || RootHelper.isRootAvailable()
+    suspend fun runRuntimeRefresh(forceRootProbe: Boolean) = coroutineScope {
+        isRefreshingStatus = true
+        try {
+            val hasRoot = RootHelper.checkRootAccess(forceRefresh = forceRootProbe)
             isRootAvailable = hasRoot
-            XposedBridgeClient.syncAllFromLocalPrefs(prefs, hasRoot)
-            val logs = RootHelper.readModuleLogs()
+
+            val syncJob = async { XposedBridgeClient.syncAllFromLocalPrefs(prefs, hasRoot) }
+            val logsJob = async { if (hasRoot) RootHelper.readModuleLogs() else emptyList() }
+            val calJob = async { if (hasRoot) RootHelper.readLiveDisplayCalibration() else null }
+
+            syncJob.await()
+            val logs = logsJob.await()
+            val cal = calJob.await()
+
             val foundStock = applyLogsToRuntimeState(logs)
+            if (cal != null) {
+                displayCalibration = cal
+            }
+
             if (logs.isEmpty() && hasRoot) {
                 frameworkDiagHint = RootHelper.readFrameworkDiagnosticHint()
             }
-            refreshCalibrationAndStock(foundStock)
+
+            if (hasRoot && !foundStock) {
+                val resolvedStock = cal?.romCurveNits ?: RootHelper.readLatestStockCurveFromLogs()
+                if (resolvedStock != null) {
+                    cacheStockCurve(resolvedStock)
+                }
+            }
+        } finally {
             isRefreshingStatus = false
         }
     }
 
-    // Push full settings into Vector RemotePreferences whenever Binder connects
-    LaunchedEffect(xposedState.isConnected) {
-        if (xposedState.isConnected) {
-            XposedBridgeClient.syncAllFromLocalPrefs(prefs, isRootAvailable)
+    fun refreshRuntimeState() {
+        if (isRefreshingStatus) return
+        scope.launch {
+            runRuntimeRefresh(forceRootProbe = true)
         }
     }
 
     // Startup checks: Root, dual-channel sync, logs, display calibration, and GitHub release check
     LaunchedEffect(Unit) {
         scope.launch {
-            isRefreshingStatus = true
-            val hasRoot = RootHelper.checkRootAccess() || RootHelper.isRootAvailable()
-            isRootAvailable = hasRoot
-            XposedBridgeClient.syncAllFromLocalPrefs(prefs, hasRoot)
-            val logs = RootHelper.readModuleLogs()
-            val foundStock = applyLogsToRuntimeState(logs)
-            if (logs.isEmpty() && hasRoot) {
-                frameworkDiagHint = RootHelper.readFrameworkDiagnosticHint()
-            }
-            refreshCalibrationAndStock(foundStock)
-            isRefreshingStatus = false
+            runRuntimeRefresh(forceRootProbe = false)
         }
         scope.launch {
             isCheckingUpdate = true
@@ -292,6 +289,8 @@ fun MainAppScreen() {
             )
             2 -> LogsTabContent(
                 modifier = Modifier.padding(innerPadding),
+                initialLogs = moduleLogs,
+                isRefreshingParent = isRefreshingStatus,
                 frameworkDiagHint = frameworkDiagHint,
                 onStatsUpdated = { newStats -> stats = newStats },
                 onLogsFetched = { fetched -> applyLogsToRuntimeState(fetched) }

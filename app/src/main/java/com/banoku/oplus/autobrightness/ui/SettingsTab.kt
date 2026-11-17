@@ -161,7 +161,10 @@ fun SettingsTabContent(
             // Live Transport Banner (Zero-Root Vector IPC vs Root SystemProperties)
             item {
                 val bannerText = when {
-                    xposedState.isConnected && xposedState.supportsRemotePrefs -> stringResource(R.string.settings_sync_banner_vector)
+                    xposedState.isConnected && xposedState.supportsRemotePrefs -> stringResource(
+                        R.string.settings_sync_banner_vector,
+                        xposedState.displayFrameworkLabel
+                    )
                     isRoot -> stringResource(R.string.settings_sync_banner_root)
                     else -> stringResource(R.string.settings_sync_banner_fallback)
                 }

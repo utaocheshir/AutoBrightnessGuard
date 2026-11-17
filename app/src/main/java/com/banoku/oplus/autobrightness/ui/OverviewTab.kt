@@ -598,7 +598,16 @@ private fun CompactHeaderBar(
                     color = SkyCyan
                 )
                 val transportLabel = when {
-                    xposedState.isConnected && xposedState.supportsRemotePrefs -> stringResource(R.string.header_ipc_zero_root)
+                    xposedState.isConnected && xposedState.supportsRemotePrefs -> {
+                        if (xposedState.isVectorFramework) {
+                            stringResource(R.string.header_ipc_zero_root)
+                        } else {
+                            stringResource(
+                                R.string.header_ipc_xposed_zero_root,
+                                xposedState.frameworkName.ifBlank { "LSPosed" }
+                            )
+                        }
+                    }
                     isRoot -> stringResource(R.string.header_ipc_root)
                     else -> stringResource(R.string.header_ipc_unlinked)
                 }

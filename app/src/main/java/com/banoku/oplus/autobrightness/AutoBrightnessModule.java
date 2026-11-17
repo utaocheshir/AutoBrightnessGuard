@@ -128,8 +128,10 @@ public class AutoBrightnessModule extends XposedModule {
 
     // Compact live protection stats throttling (piggybacked on existing calls, zero background threads)
     private volatile long mLastStatsLogMs = 0L;
+    private volatile long mLastHeartbeatReemitMs = 0L;
     private volatile long mLastLoggedTotalEvents = -1L;
     private volatile long mLastBlockedEpochMs = 0L;
+    private volatile String mBootSummaryLine = "";
 
     // Cached reflection handles (avoid repeated Class.forName in hot brightness paths)
     private static volatile Method sSpGetBoolean;
@@ -226,8 +228,11 @@ public class AutoBrightnessModule extends XposedModule {
             if (i > 0) summary.append(',');
             summary.append(i + 1).append(':').append(statusArr[i] ? "OK" : "SKIP");
         }
-        note(Log.INFO, "HOOK_SUMMARY:installed=" + okCount + "/10,version=" + VERSION
-                + ",sdk=" + Build.VERSION.SDK_INT + ",hooks=" + summary);
+        String summaryLine = "HOOK_SUMMARY:installed=" + okCount + "/10,version=" + VERSION
+                + ",sdk=" + Build.VERSION.SDK_INT + ",hooks=" + summary;
+        mBootSummaryLine = summaryLine;
+        mLastHeartbeatReemitMs = SystemClock.elapsedRealtime();
+        note(Log.INFO, summaryLine);
 
         // Log whether custom curve is active immediately on boot
         String bootCurve = getStringSetting("pref_curve_config", PROP_CURVE_CONFIG, "");
@@ -1029,15 +1034,27 @@ public class AutoBrightnessModule extends XposedModule {
                 + lockedDebounce.get() + clampedBrightness.get() + skippedDarkEnv.get()
                 + bypassedAppDimming.get() + smoothedAuxSensor.get() + widenedHysteresis.get()
                 + appliedCustomCurve.get() + blockedPwmSensor.get();
-        if (total == mLastLoggedTotalEvents) {
+        long now = SystemClock.elapsedRealtime();
+        boolean heartbeatDue = (now - mLastHeartbeatReemitMs) >= 300_000L;
+        if (total == mLastLoggedTotalEvents && !heartbeatDue) {
             return;
         }
-        long now = SystemClock.elapsedRealtime();
         if (!force && mLastStatsLogMs != 0L && (now - mLastStatsLogMs) < STATS_LOG_INTERVAL_MS) {
             return;
         }
         mLastStatsLogMs = now;
         mLastLoggedTotalEvents = total;
+        if (heartbeatDue) {
+            mLastHeartbeatReemitMs = now;
+            String bootSummary = mBootSummaryLine;
+            if (bootSummary != null && !bootSummary.isEmpty()) {
+                note(Log.INFO, bootSummary);
+            }
+            String stockCurve = mLastStockCurve;
+            if (stockCurve != null && !stockCurve.isEmpty()) {
+                note(Log.INFO, "STOCK_CURVE:" + stockCurve);
+            }
+        }
         note(Log.INFO, "GUARD_STATS:reset=" + blockedReset.get()
                 + ",ambient=" + blockedAmbient.get()
                 + ",drift=" + stabilizedDrift.get()
@@ -1236,9 +1253,12 @@ public class AutoBrightnessModule extends XposedModule {
     }
 
     private void note(int priority, String msg) {
-        try { log(priority, TAG, msg); } catch (Throwable ignored) { }
         try {
-            Log.println(Log.WARN, TAG, msg);
-        } catch (Throwable ignored) { }
+            log(priority, TAG, msg);
+        } catch (Throwable ignored) {
+            try {
+                Log.println(priority, TAG, msg);
+            } catch (Throwable ignored2) { }
+        }
     }
 }
