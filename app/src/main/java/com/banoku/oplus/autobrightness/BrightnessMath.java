@@ -10,7 +10,7 @@ public final class BrightnessMath {
 
     public static final float NIGHT_MIN_FLOOR_NITS = 8.5f;
     public static final float MAX_AUX_INDOOR_LUX = 200.0f;
-    public static final float AUX_DEADBAND_LUX = 3.0f;
+    public static final float AUX_DEADBAND_LUX = 10.0f;
 
     public static final float DEFAULT_HYSTERESIS_SCALE = 1.8f;
     public static final float MIN_HYSTERESIS_SCALE = 1.0f;
@@ -82,7 +82,7 @@ public final class BrightnessMath {
                 && mainLux >= 0f
                 && mainLux < MAX_AUX_INDOOR_LUX
                 && (auxLux - mainLux) > AUX_DEADBAND_LUX
-                && auxLux > (mainLux * 1.05f);
+                && auxLux > (mainLux * 1.15f);
     }
 
     public static boolean shouldRaiseNitFloor(float nit, float floorNits) {

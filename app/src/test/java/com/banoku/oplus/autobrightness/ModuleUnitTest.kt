@@ -55,10 +55,14 @@ class ModuleUnitTest {
         assertEquals(76.0f, BrightnessMath.stepAuxEma(-1.0f, 76.0f, 0.35f), 0.001f)
         assertEquals(33.1f, BrightnessMath.stepAuxEma(10.0f, 76.0f, 0.35f), 0.001f)
 
-        // Indoor Aux deadband filter: ignore tiny <= 3 lx jitter & bright daylight (>= 200 lx)
+        // Indoor Aux deadband filter: ignore <= 10 lx or <= 1.15x jitter & bright daylight (>= 200 lx)
+        assertEquals(10.0f, BrightnessMath.AUX_DEADBAND_LUX, 0.001f)
         assertFalse(BrightnessMath.shouldSmoothIndoorAuxLux(20f, 22f))
         assertFalse(BrightnessMath.shouldSmoothIndoorAuxLux(100f, 103.5f))
+        assertFalse(BrightnessMath.shouldSmoothIndoorAuxLux(50f, 56f))
+        assertFalse(BrightnessMath.shouldSmoothIndoorAuxLux(100f, 112f))
         assertTrue(BrightnessMath.shouldSmoothIndoorAuxLux(20f, 35f))
+        assertTrue(BrightnessMath.shouldSmoothIndoorAuxLux(100f, 120f))
         assertFalse(BrightnessMath.shouldSmoothIndoorAuxLux(250f, 400f))
     }
 
@@ -197,7 +201,7 @@ class ModuleUnitTest {
         val raw = listOf(
             "11-16 09:00:00.001 1000 1234 1234 I AutoBrightnessGuard: v1.5.0 (Vector/LSPosed Verified Engine) starting, sdk=37, remote=true, build=test",
             "11-16 09:00:01.001 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=10/10,version=1.5.0,sdk=37,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK",
-            "11-16 14:25:00.100 1000 1234 1234 I AutoBrightnessGuard: GUARD_STATS:reset=3,ambient=2,drift=12,debounce=4,floor=5,darkenv=2,dimming=1,aux=8,hyst=7,curve=15,pwm=1,last_block_ms=1731740000000"
+            "11-16 14:25:00.100 1000 1234 1234 I AutoBrightnessGuard: GUARD_STATS:reset=3,ambient=2,drift=12,debounce=4,floor=5,darkenv=2,dimming=1,aux=8,hyst=7,curve=15,pwm=1,last_block_ms=1731740000000,hooks=10/10,hook_mask=1111111111,ver=1.5.0,probe_h4=12,probe_h6=0,probe_h8=4"
         ).joinToString("\n")
         val entries = RootHelper.parseLogs(raw).reversed()
         val stats = RootHelper.computeStats(entries)

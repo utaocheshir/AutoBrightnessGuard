@@ -20,6 +20,7 @@ import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -105,14 +106,15 @@ public class AutoBrightnessModule extends XposedModule {
     public static final String DISK_LOG_OLD_PATH = "/data/system/autobrightness_guard.log.old";
     private static final long MAX_DISK_LOG_BYTES = 96L * 1024L;
     private static final long SETTINGS_CACHE_TTL_MS = 750L;
-    private static final long BURST_COALESCE_FAST_MS = 2_500L;
-    private static final long BURST_COALESCE_SLOW_MS = 12_000L;
+    private static final long BURST_COALESCE_FAST_MS = 5_000L;
+    private static final long BURST_COALESCE_FLOOR_MS = 10_000L;
+    private static final long BURST_COALESCE_SLOW_MS = 15_000L;
     private static final float DARK_ENV_COUNT_MAX_NIT = 65.0f;
 
     public static final float NIGHT_MIN_FLOOR_NITS = BrightnessMath.NIGHT_MIN_FLOOR_NITS;
     private static final float MAX_AUX_INDOOR_LUX = BrightnessMath.MAX_AUX_INDOOR_LUX;
     private static final int MAX_PASS_LOGS = 10;
-    private static final int CALLER_FRAMES = 6;
+    private static final int CALLER_FRAMES = 10;
     private static final long STATS_LOG_INTERVAL_MS = 60_000L;
 
     private final AtomicInteger blockedReset = new AtomicInteger();
@@ -128,6 +130,12 @@ public class AutoBrightnessModule extends XposedModule {
     private final AtomicInteger appliedCustomCurve = new AtomicInteger();
     private final AtomicInteger blockedPwmSensor = new AtomicInteger();
 
+    // Diagnostic invocation probes for silent hooks (#4, #6, #8)
+    private final AtomicInteger probeDebounceCalls = new AtomicInteger();
+    private final AtomicInteger probeDimmingCalls = new AtomicInteger();
+    private final AtomicInteger probeHystCalls = new AtomicInteger();
+    private final AtomicBoolean mLoggedHystError = new AtomicBoolean(false);
+
     // Burst-coalescing timestamps so high-frequency display/animation ticks count episodes cleanly
     private volatile long mLastAntiDriftCountMs = 0L;
     private volatile long mLastDebounceCountMs = 0L;
@@ -136,6 +144,7 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile long mLastDimmingCountMs = 0L;
     private volatile long mLastAuxCountMs = 0L;
     private volatile long mLastHystCountMs = 0L;
+    private volatile long mLastCurveCountMs = 0L;
     private volatile long mLastPwmCountMs = 0L;
 
     // Dual-channel config: Vector/LibXposed RemotePreferences + SystemProperties fallback
@@ -157,6 +166,7 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile long mLastStatsLogMs = 0L;
     private volatile long mLastHeartbeatReemitMs = 0L;
     private volatile long mLastLoggedTotalEvents = -1L;
+    private volatile long mLastLoggedProbeEvents = -1L;
     private volatile long mLastBlockedEpochMs = 0L;
     private volatile String mBootSummaryLine = "";
     private volatile int mInstalledHookCount = 0;
@@ -372,6 +382,7 @@ public class AutoBrightnessModule extends XposedModule {
             mPairFirstField = pairCls.getField("first");
             mPairSecondField = pairCls.getField("second");
             mOplusPairCreate = pairCls.getDeclaredMethod("create", String.class, Object.class, Object.class);
+            mOplusPairCreate.setAccessible(true);
         } catch (Throwable t) {
             note(Log.INFO, "OplusPair cache skipped: " + t.getMessage());
         }
@@ -727,7 +738,7 @@ public class AutoBrightnessModule extends XposedModule {
                     }
                 }
                 long now = SystemClock.elapsedRealtime();
-                if (mLastAntiDriftCountMs == 0L || (now - mLastAntiDriftCountMs) >= BURST_COALESCE_FAST_MS) {
+                if (mLastAntiDriftCountMs == 0L || (now - mLastAntiDriftCountMs) >= BURST_COALESCE_SLOW_MS) {
                     mLastAntiDriftCountMs = now;
                     int n = stabilizedDrift.incrementAndGet();
                     if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
@@ -749,8 +760,14 @@ public class AutoBrightnessModule extends XposedModule {
     private final class DebounceScaleHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
+            int hits = probeDebounceCalls.incrementAndGet();
             Object result = chain.proceed();
             SettingsSnapshot cfg = getSettings();
+            if (hits == 1) {
+                note(Log.INFO, "PROBE [4/10] getAccelerateScale first hit (enabled="
+                        + cfg.debounceLock + ", origResult=" + result + ")");
+                maybeLogCompactStats(true);
+            }
             if (!cfg.debounceLock) {
                 return result;
             }
@@ -758,7 +775,7 @@ public class AutoBrightnessModule extends XposedModule {
                 float scale = (Float) result;
                 if (scale > 1.0f) {
                     long now = SystemClock.elapsedRealtime();
-                    if (mLastDebounceCountMs == 0L || (now - mLastDebounceCountMs) >= BURST_COALESCE_FAST_MS) {
+                    if (mLastDebounceCountMs == 0L || (now - mLastDebounceCountMs) >= BURST_COALESCE_SLOW_MS) {
                         mLastDebounceCountMs = now;
                         int n = lockedDebounce.incrementAndGet();
                         if (n == 1 || (n % 50 == 1 && cfg.verboseLog)) {
@@ -855,7 +872,7 @@ public class AutoBrightnessModule extends XposedModule {
                             }
 
                             long now = SystemClock.elapsedRealtime();
-                            if (mLastFloorCountMs == 0L || (now - mLastFloorCountMs) >= 1_500L) {
+                            if (mLastFloorCountMs == 0L || (now - mLastFloorCountMs) >= BURST_COALESCE_FLOOR_MS) {
                                 mLastFloorCountMs = now;
                                 int n = clampedBrightness.incrementAndGet();
                                 if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
@@ -879,7 +896,12 @@ public class AutoBrightnessModule extends XposedModule {
     private final class SmartDimmingBypassHook implements XposedInterface.Hooker {
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
+            int hits = probeDimmingCalls.incrementAndGet();
             SettingsSnapshot cfg = getSettings();
+            if (hits == 1) {
+                note(Log.INFO, "PROBE [6/10] isReduceDisabled first hit (enabled=" + cfg.disableSmartDimming + ")");
+                maybeLogCompactStats(true);
+            }
             if (!cfg.disableSmartDimming) {
                 return chain.proceed();
             }
@@ -900,7 +922,7 @@ public class AutoBrightnessModule extends XposedModule {
      * 7. Dual 360° Aux Sensor Balancer + Individual Sensor Disable Toggles:
      * - If disable_aux_sensor is enabled: returns mainLux (ignores rear sensor).
      * - If disable_main_sensor is enabled: returns auxLux (uses rear sensor directly).
-     * - Otherwise smooths significant indoor spikes (> 3 lx deadband) with blend + EMA (0.35 alpha).
+     * - Otherwise smooths significant indoor spikes (> 10 lx deadband, > 1.15x) with blend + EMA (0.35 alpha).
      */
     private final class DualSensorAuxHook implements XposedInterface.Hooker {
         @Override
@@ -933,7 +955,7 @@ public class AutoBrightnessModule extends XposedModule {
 
                     if (Math.abs(smoothed - auxLux) >= 1.5f) {
                         long now = SystemClock.elapsedRealtime();
-                        if (mLastAuxCountMs == 0L || (now - mLastAuxCountMs) >= BURST_COALESCE_FAST_MS) {
+                        if (mLastAuxCountMs == 0L || (now - mLastAuxCountMs) >= BURST_COALESCE_SLOW_MS) {
                             mLastAuxCountMs = now;
                             int n = smoothedAuxSensor.incrementAndGet();
                             if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
@@ -965,15 +987,50 @@ public class AutoBrightnessModule extends XposedModule {
 
         @Override
         public Object intercept(XposedInterface.Chain chain) throws Throwable {
+            int hits = probeHystCalls.incrementAndGet();
             Object pair = chain.proceed();
             SettingsSnapshot cfg = getSettings();
             float scale = cfg.hysteresisScale;
+
+            if (hits == 1) {
+                String arg0Str = "?";
+                try {
+                    arg0Str = String.valueOf(chain.getArg(0));
+                } catch (Throwable ignored) { }
+                String pairInfo = "null";
+                if (pair != null) {
+                    try {
+                        Object fObj = mPairFirstField != null ? mPairFirstField.get(pair) : "<noField>";
+                        Object sObj = mPairSecondField != null ? mPairSecondField.get(pair) : "<noField>";
+                        String fType = fObj != null ? fObj.getClass().getSimpleName() : "null";
+                        String sType = sObj != null ? sObj.getClass().getSimpleName() : "null";
+                        pairInfo = pair.getClass().getSimpleName()
+                                + "(" + fObj + ":" + fType + ", " + sObj + ":" + sType + ")";
+                    } catch (Throwable t) {
+                        pairInfo = pair.getClass().getSimpleName() + "(inspectErr=" + t.getClass().getSimpleName() + ")";
+                    }
+                }
+                note(Log.INFO, "PROBE [8/10] getLargeChangeLimit first hit: targetLux=" + arg0Str
+                        + ", scale=" + scale
+                        + ", pair=" + pairInfo
+                        + ", createMethod=" + (mOplusPairCreate != null));
+                maybeLogCompactStats(true);
+            }
+
             if (scale <= 1.01f || pair == null || mPairFirstField == null || mPairSecondField == null || mOplusPairCreate == null) {
                 return pair;
             }
 
             try {
-                float targetLux = (Float) chain.getArg(0);
+                Object arg0 = chain.getArg(0);
+                if (!(arg0 instanceof Float)) {
+                    if (mLoggedHystError.compareAndSet(false, true)) {
+                        note(Log.WARN, "PROBE [8/10] unexpected targetLux arg type: "
+                                + (arg0 != null ? arg0.getClass().getName() : "null"));
+                    }
+                    return pair;
+                }
+                float targetLux = (Float) arg0;
                 Object firstObj = mPairFirstField.get(pair);
                 Object secondObj = mPairSecondField.get(pair);
                 if (firstObj instanceof Float && secondObj instanceof Float) {
@@ -983,7 +1040,7 @@ public class AutoBrightnessModule extends XposedModule {
                     if (widened[0] != left || widened[1] != right) {
                         Object widenedPair = mOplusPairCreate.invoke(null, pairTag, widened[0], widened[1]);
                         long now = SystemClock.elapsedRealtime();
-                        if (mLastHystCountMs == 0L || (now - mLastHystCountMs) >= BURST_COALESCE_FAST_MS) {
+                        if (mLastHystCountMs == 0L || (now - mLastHystCountMs) >= BURST_COALESCE_SLOW_MS) {
                             mLastHystCountMs = now;
                             int n = widenedHysteresis.incrementAndGet();
                             if (n == 1 || (n % 50 == 1 && cfg.verboseLog)) {
@@ -994,8 +1051,17 @@ public class AutoBrightnessModule extends XposedModule {
                         }
                         return widenedPair;
                     }
+                } else if (mLoggedHystError.compareAndSet(false, true)) {
+                    note(Log.WARN, "PROBE [8/10] unexpected OplusPair field types: first="
+                            + (firstObj != null ? firstObj.getClass().getName() : "null")
+                            + ", second=" + (secondObj != null ? secondObj.getClass().getName() : "null"));
                 }
-            } catch (Throwable ignored) { }
+            } catch (Throwable t) {
+                if (mLoggedHystError.compareAndSet(false, true)) {
+                    note(Log.WARN, "PROBE [8/10] OplusPair error: "
+                            + t.getClass().getSimpleName() + ": " + t.getMessage());
+                }
+            }
 
             return pair;
         }
@@ -1057,11 +1123,15 @@ public class AutoBrightnessModule extends XposedModule {
                             }
                         }
                         maybeSampleStockCurve(chain, name);
-                        int n = appliedCustomCurve.incrementAndGet();
-                        if (n == 1 || (n % 50 == 1 && cfgSnap.verboseLog)) {
-                            note(Log.INFO, "CURVE override lux=" + lux + " -> " + customNit + " nits (#" + n + ")");
+                        long now = SystemClock.elapsedRealtime();
+                        if (mLastCurveCountMs == 0L || (now - mLastCurveCountMs) >= BURST_COALESCE_SLOW_MS) {
+                            mLastCurveCountMs = now;
+                            int n = appliedCustomCurve.incrementAndGet();
+                            if (n == 1 || (n % 50 == 1 && cfgSnap.verboseLog)) {
+                                note(Log.INFO, "CURVE override lux=" + lux + " -> " + customNit + " nits (#" + n + ")");
+                            }
+                            maybeLogCompactStats(false);
                         }
-                        maybeLogCompactStats(false);
                         return customNit;
                     } else {
                         Object stockResult = chain.proceed();
@@ -1160,9 +1230,10 @@ public class AutoBrightnessModule extends XposedModule {
                 + lockedDebounce.get() + clampedBrightness.get() + skippedDarkEnv.get()
                 + bypassedAppDimming.get() + smoothedAuxSensor.get() + widenedHysteresis.get()
                 + appliedCustomCurve.get() + blockedPwmSensor.get();
+        long probeTotal = (long) probeDebounceCalls.get() + probeDimmingCalls.get() + probeHystCalls.get();
         long now = SystemClock.elapsedRealtime();
         boolean heartbeatDue = (now - mLastHeartbeatReemitMs) >= 300_000L;
-        if (total == mLastLoggedTotalEvents && !heartbeatDue) {
+        if (total == mLastLoggedTotalEvents && probeTotal == mLastLoggedProbeEvents && !heartbeatDue) {
             return;
         }
         if (!force && mLastStatsLogMs != 0L && (now - mLastStatsLogMs) < STATS_LOG_INTERVAL_MS) {
@@ -1170,6 +1241,7 @@ public class AutoBrightnessModule extends XposedModule {
         }
         mLastStatsLogMs = now;
         mLastLoggedTotalEvents = total;
+        mLastLoggedProbeEvents = probeTotal;
         if (heartbeatDue) {
             mLastHeartbeatReemitMs = now;
             String bootSummary = mBootSummaryLine;
@@ -1195,7 +1267,10 @@ public class AutoBrightnessModule extends XposedModule {
                 + ",last_block_ms=" + mLastBlockedEpochMs
                 + ",hooks=" + mInstalledHookCount + "/10"
                 + ",hook_mask=" + mInstalledHookMask
-                + ",ver=" + VERSION);
+                + ",ver=" + VERSION
+                + ",probe_h4=" + probeDebounceCalls.get()
+                + ",probe_h6=" + probeDimmingCalls.get()
+                + ",probe_h8=" + probeHystCalls.get());
     }
 
     private SettingsSnapshot getSettings() {
@@ -1397,7 +1472,8 @@ public class AutoBrightnessModule extends XposedModule {
             }
             if (cls.startsWith("LSPHooker_") || cls.startsWith("Vector_") || cls.contains("HookBridge")
                     || cls.startsWith("io.github.libxposed.") || cls.startsWith("org.lsposed.")
-                    || cls.startsWith("org.matrix.") || cls.startsWith("java.lang.reflect.")) {
+                    || cls.startsWith("org.matrix.") || cls.startsWith("java.lang.reflect.")
+                    || (!cls.contains(".") && cls.length() <= 4)) {
                 continue;
             }
             if (added++ > 0) sb.append(" <- ");
