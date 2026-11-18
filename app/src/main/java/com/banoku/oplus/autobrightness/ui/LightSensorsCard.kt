@@ -648,7 +648,7 @@ private fun SensorReadingRow(
                     color = roleColor.copy(alpha = 0.15f)
                 ) {
                     Text(
-                        text = item.role.label,
+                        text = if (item.role == SensorRole.PWM) "PWM • #7" else item.role.label,
                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,

@@ -179,31 +179,6 @@ object XposedBridgeClient {
         }
     }
 
-    suspend fun syncHysteresis(
-        localPrefs: SharedPreferences,
-        scale: Float
-    ) {
-        val ts = System.currentTimeMillis()
-        val clamped = scale.coerceIn(
-            BrightnessMath.MIN_HYSTERESIS_SCALE,
-            BrightnessMath.MAX_HYSTERESIS_SCALE
-        )
-        localPrefs.edit().putFloat("pref_hysteresis_scale", clamped).apply()
-        getRemotePreferences()?.edit()
-            ?.putFloat("pref_hysteresis_scale", clamped)
-            ?.putLong(AutoBrightnessModule.PREF_SYNC_TS, ts)
-            ?.apply()
-        val propVal = String.format(Locale.US, "%.1f", clamped)
-        withContext(Dispatchers.IO) {
-            RootHelper.setSystemPropertiesBatch(
-                mapOf(
-                    AutoBrightnessModule.PROP_HYSTERESIS to propVal,
-                    AutoBrightnessModule.PROP_SYNC_TS to ts.toString()
-                )
-            )
-        }
-    }
-
     suspend fun syncFloorMode(
         localPrefs: SharedPreferences,
         modeKey: String,
@@ -297,8 +272,6 @@ object XposedBridgeClient {
     ) {
         val rp = remotePrefs ?: return
         val (isAutoFloor, effectiveCustomNit) = resolveEffectiveFloor(localPrefs)
-        val hysteresis = localPrefs.getFloat("pref_hysteresis_scale", BrightnessMath.DEFAULT_HYSTERESIS_SCALE)
-            .coerceIn(BrightnessMath.MIN_HYSTERESIS_SCALE, BrightnessMath.MAX_HYSTERESIS_SCALE)
         val curve = localPrefs.getString("pref_curve_config", "").orEmpty()
 
         try {
@@ -310,9 +283,6 @@ object XposedBridgeClient {
                 .putBoolean("pref_stability_guard", localPrefs.getBoolean("pref_stability_guard", true))
                 .putBoolean("pref_min_floor", isAutoFloor)
                 .putFloat("pref_custom_min_nit", effectiveCustomNit)
-                .putBoolean("pref_debounce_lock", localPrefs.getBoolean("pref_debounce_lock", true))
-                .putFloat("pref_hysteresis_scale", hysteresis)
-                .putBoolean("pref_disable_smart_dimming", localPrefs.getBoolean("pref_disable_smart_dimming", true))
                 .putBoolean("pref_dual_sensor_guard", localPrefs.getBoolean("pref_dual_sensor_guard", true))
                 .putBoolean("pref_disable_main_sensor", localPrefs.getBoolean("pref_disable_main_sensor", false))
                 .putBoolean("pref_disable_aux_sensor", localPrefs.getBoolean("pref_disable_aux_sensor", false))
@@ -338,8 +308,6 @@ object XposedBridgeClient {
 
         withContext(Dispatchers.IO) {
             val (isAutoFloor, effectiveCustomNit) = resolveEffectiveFloor(localPrefs)
-            val hysteresis = localPrefs.getFloat("pref_hysteresis_scale", BrightnessMath.DEFAULT_HYSTERESIS_SCALE)
-                .coerceIn(BrightnessMath.MIN_HYSTERESIS_SCALE, BrightnessMath.MAX_HYSTERESIS_SCALE)
             val curve = localPrefs.getString("pref_curve_config", "").orEmpty()
             val customPropStr = if (effectiveCustomNit >= 0.5f) {
                 String.format(Locale.US, "%.1f", effectiveCustomNit)
@@ -356,9 +324,6 @@ object XposedBridgeClient {
                 AutoBrightnessModule.PROP_STABILITY_GUARD to b("pref_stability_guard", true),
                 AutoBrightnessModule.PROP_MIN_FLOOR to if (isAutoFloor) "1" else "0",
                 AutoBrightnessModule.PROP_CUSTOM_MIN_NIT to customPropStr,
-                AutoBrightnessModule.PROP_DEBOUNCE_LOCK to b("pref_debounce_lock", true),
-                AutoBrightnessModule.PROP_HYSTERESIS to String.format(Locale.US, "%.1f", hysteresis),
-                AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING to b("pref_disable_smart_dimming", true),
                 AutoBrightnessModule.PROP_DUAL_SENSOR_GUARD to b("pref_dual_sensor_guard", true),
                 AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR to b("pref_disable_main_sensor", false),
                 AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR to b("pref_disable_aux_sensor", false),

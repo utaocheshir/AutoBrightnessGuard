@@ -24,6 +24,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -51,6 +53,7 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val colors = AppTheme.colors
     var expandedFaq by remember { mutableStateOf<Int?>(0) }
+    var hooksGuideExpanded by remember { mutableStateOf(true) }
     var changelogExpanded by remember { mutableStateOf(false) }
 
     val faqPairs = listOf(
@@ -60,6 +63,18 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
         R.string.faq_q3 to R.string.faq_a3,
         R.string.faq_q4 to R.string.faq_a4
     )
+
+    val hookGuides = remember {
+        listOf(
+            Triple(1, R.string.hook_guide_1_title, R.string.hook_guide_1_method to R.string.hook_guide_1_desc),
+            Triple(2, R.string.hook_guide_2_title, R.string.hook_guide_2_method to R.string.hook_guide_2_desc),
+            Triple(3, R.string.hook_guide_3_title, R.string.hook_guide_3_method to R.string.hook_guide_3_desc),
+            Triple(4, R.string.hook_guide_4_title, R.string.hook_guide_4_method to R.string.hook_guide_4_desc),
+            Triple(5, R.string.hook_guide_5_title, R.string.hook_guide_5_method to R.string.hook_guide_5_desc),
+            Triple(6, R.string.hook_guide_6_title, R.string.hook_guide_6_method to R.string.hook_guide_6_desc),
+            Triple(7, R.string.hook_guide_7_title, R.string.hook_guide_7_method to R.string.hook_guide_7_desc)
+        )
+    }
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -79,6 +94,66 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
+            }
+
+            // Detailed 7-Hook Reference Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("hooks_guide_card"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { hooksGuideExpanded = !hooksGuideExpanded }
+                                .padding(18.dp)
+                                .testTag("hooks_guide_toggle"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.hooks_guide_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = stringResource(R.string.hooks_guide_subtitle),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
+                                )
+                            }
+                            Icon(
+                                imageVector = if (hooksGuideExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = null
+                            )
+                        }
+
+                        AnimatedVisibility(visible = hooksGuideExpanded) {
+                            Column(
+                                modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 18.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                hookGuides.forEachIndexed { idx, (hookId, titleRes, methodAndDesc) ->
+                                    if (idx > 0) {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                                    }
+                                    HookGuideEntry(
+                                        hookId = hookId,
+                                        title = stringResource(titleRes),
+                                        methodSignature = stringResource(methodAndDesc.first),
+                                        description = stringResource(methodAndDesc.second),
+                                        accentColor = if (hookId <= 2) colors.accentRed else if (hookId <= 5) colors.accentCyan else colors.accentGreen
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             faqPairs.forEachIndexed { idx, (qRes, aRes) ->
@@ -140,11 +215,12 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 ChangelogBlock(
-                                    versionTitle = "v1.5.0 (Vector Framework + Stats Telemetry)",
+                                    versionTitle = "v1.5.0 (Vector Framework, 7-Hook Engine & Stats)",
                                     color = colors.accentGreen,
                                     body = "• Vector Framework (LibXposed API 102) & RemotePreferences: Zero-Root live sync + scope check, preserving full SystemProperties fallback for legacy LSPosed forks.\n" +
-                                        "• Fixed Active Protection Statistics card: throttled GUARD_STATS telemetry + pinned BLOCKED/GUARD_STATS parsing across long uptimes, displaying sleep-reset blocks and active guard counters.\n" +
-                                        "• UI/UX & Localization cleanup: unified Status + Protection card, grouped Settings, moved Device Compatibility to Tools, collapsible terminal commands, OLED & Light themes, and full RU/EN/UK strings."
+                                        "• Clean 7/7 Verified Hook Engine: removed 3 uncalled ColorOS 17 hooks (getAccelerateScale, isReduceDisabled, getLargeChangeLimit) after 24h runtime telemetry, numbered toggles (#1–#7) across Settings/Overview, and added a full 7-hook reference block in FAQ.\n" +
+                                        "• Calmed Telemetry & Reliable Stats: persistent disk ring log (/data/system/autobrightness_guard.log), throttled GUARD_STATS snapshots (hook_mask=1111111), burst-coalesced counters, and 10 lx Aux deadband smoothing.\n" +
+                                        "• ColorOS 17 Calibration & Polished UI: parsed 6..4095 BrightnessModel scale + HBM peak, unified Status + Protection card, grouped Settings, Tools compatibility & collapsible commands, OLED & Light themes."
                                 )
 
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
@@ -162,16 +238,16 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                                 ChangelogBlock(
                                     versionTitle = "v1.4.4 (PWM Sensor Switch & Live Nits)",
                                     color = colors.accentCyan,
-                                    body = "• Disableable under-display PWM sensor (high_pwm_rgb, Hook 10/10).\n" +
+                                    body = "• Disableable under-display PWM sensor (high_pwm_rgb).\n" +
                                         "• Hardware spline nit calibration synced across Sensors & Curve Editor."
                                 )
 
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 ChangelogBlock(
-                                    versionTitle = "v1.4.0 – 1.4.3 (10-Hook Engine & Curve Profiles)",
+                                    versionTitle = "v1.4.0 – 1.4.3 (Multi-Hook Engine & Curve Profiles)",
                                     color = colors.accentCyan,
-                                    body = "• DragOpt resetAutoBrightness(int), Anti-Drift, Debounce Lock, 8.5 nit Night Floor, DarkEnv Skip, Per-App Smart Dimming Bypass, 360° Aux Smoother, Hysteresis Widener, 7-point Live Curve with JSON profiles."
+                                    body = "• DragOpt resetAutoBrightness(int), Anti-Drift, 8.5 nit Night Floor, DarkEnv Skip, 360° Aux Smoother, 7-point Live Curve with JSON profiles."
                                 )
 
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
@@ -307,5 +383,53 @@ private fun FaqItem(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun HookGuideEntry(
+    hookId: Int,
+    title: String,
+    methodSignature: String,
+    description: String,
+    accentColor: Color
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = accentColor.copy(alpha = 0.16f)
+            ) {
+                Text(
+                    text = "[$hookId/7]",
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = accentColor
+                )
+            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Text(
+            text = methodSignature,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = accentColor.copy(alpha = 0.9f)
+        )
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodySmall,
+            lineHeight = 19.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f)
+        )
     }
 }

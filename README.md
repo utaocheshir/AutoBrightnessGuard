@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.4.4-blue.svg" alt="Release" /></a>
+  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.5.0-blue.svg" alt="Release" /></a>
   <a href="https://github.com/libxposed"><img src="https://img.shields.io/badge/LibXposed-API%20102-orange.svg" alt="LibXposed API 102" /></a>
   <a href="https://github.com/utaocheshir/AutoBrightnessGuard"><img src="https://img.shields.io/badge/Target-OnePlus%20%7C%20OxygenOS%20%7C%20ColorOS-green.svg" alt="Platform" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg" alt="License" /></a>
@@ -30,20 +30,22 @@ In OxygenOS and ColorOS 12–17:
 1. `OplusAutomaticBrightnessController` sets an alarm for **10 minutes** every time the screen turns off, triggering `resetAutoBrightness()` / `resetAutoBrightness(int)` (ColorOS 17 DragOpt path) and `OplusBrightnessAmbientAdapter.resetAmbientAdapter("AutoReset")`.
 2. In ColorOS 17, post-processors (`OplusFeatureDarkEnvReduceBrightness` after 20 min, `OplusFeatureReduceBrightness` per-app dimming) aggressively lower brightness nits, while `OplusBrightnessAmbientAdapter` (`handleStableForceChange` / `handleSmallChangeAnimating`), `StabilityProcess`, and `LuxEventResult.calculateAuxLux` can cause steady-light drifting.
 
-### 🛡️ How Auto Brightness Guard Fixes It
-- **Dual-Layer Curve Reset Guard:** Intercepts **both** `resetAutoBrightness()` and `resetAutoBrightness(int)` (for ColorOS 17 DragOpt) plus `resetAmbientAdapter(String)` using `rule=lambda` (`lambda$new$1`) and `rule=alarm` (`AlarmManager$ListenerWrapper`).
-- **Anti-Drift & Debounce Lock (v1.4.0):** Suppresses steady-light micro-drift (`handleStableForceChange`, `handleSmallChangeAnimating`) and caps `StabilityProcess.getAccelerateScale()` at `<= 1.0f`.
-- **Night Reading Floor & Smart Dimming Bypass (v1.4.0):** Skips 20-min dark-room progressive dimming (`OplusFeatureDarkEnvReduceBrightness`), enforces `>= 8.5 nits` in `OplusBrightnessPostProcessingManager.convertNitToBrightness()`, and disables per-app dimming in `OplusFeatureReduceBrightness`.
-- **Dual 360° Aux Sensor Balancer (v1.4.0):** Smooths indoor rear-sensor spikes in `LuxEvent$LuxEventResult.calculateAuxLux()`.
-- **ART Compiler Deoptimization & Fail-Open Safety:** Forces ART deoptimization on target methods and falls back safely on any error.
-- **Instant SystemProperties IPC:** Settings apply immediately via `persist.autobrightness.*` without restarting `system_server`.
+### 🛡️ How Auto Brightness Guard Fixes It (7 Verified Hooks)
+1. **Hook #1 — Curve Reset Guard:** Intercepts both `resetAutoBrightness()` and `resetAutoBrightness(int)` (ColorOS 17 DragOpt) triggered by the screen-off alarm (`rule=lambda` & `rule=alarm`).
+2. **Hook #2 — Ambient Adapter Reset Guard:** Blocks `OplusBrightnessAmbientAdapter.resetAmbientAdapter(String)` on `AutoReset` / sleep alarms while preserving live light adaptation.
+3. **Hook #3 — Steady-Light Anti-Drift:** Suppresses background `handleStableForceChange` and `handleSmallChangeAnimating` micro-drift updates under constant lighting.
+4. **Hook #4 — Night Floor & DarkEnv Guard (`4a + 4b`):** Skips hidden 20-min dark-room dimming (`OplusFeatureDarkEnvReduceBrightness`) and enforces either Auto `8.5 nits` or an unconditional `1–150 nits` custom floor (`convertNitToBrightness`).
+5. **Hook #5 — Dual 360° Aux Sensor Smoother:** Smooths significant indoor rear-sensor spikes (`>10 lx` & `>1.15x`) in `LuxEventResult.calculateAuxLux()` (60% blend + 0.35 EMA), plus handles `MAIN` / `AUX` sensor kill-switches.
+6. **Hook #6 — Live Custom 7-Point Curve:** Substitutes your custom lux→nit curve (`0–10,000 lx`) in `OplusDisplayBrightnessModel.getValueByCurve("", lux)` and samples the stock ROM spline (`STOCK_CURVE`).
+7. **Hook #7 — Under-Display PWM Sensor Switch:** Drops `high_pwm_rgb` (`tcs3720`) event streams in `SystemSensorManager$SensorEventQueue` when disabled on Overview.
+- **Zero-Root Vector IPC + SystemProperties Fallback:** Native **Vector Framework (LibXposed API 102)** `RemotePreferences` syncs settings instantly without `su`, while keeping `persist.autobrightness.*` fallback for legacy LSPosed forks.
+- **Fail-Open & Persistent Stats:** Forces ART deoptimization on hooked methods, emits burst-coalesced `GUARD_STATS` to `/data/system/autobrightness_guard.log`, and falls back safely on any error.
 
 ### ✨ Companion App Features
-- **Overview (v1.4.4):** Live 10/10 hook verification card (shows which methods were found & hooked inside `system_server` + hit counts), toggleable `MAIN`, `AUX` (`tcs3449`), and under-display `PWM` (`tcs3720` / `high_pwm_rgb`) light sensors, live screen brightness readout in `%` & `nits`, and real ColorOS / OxygenOS / device compatibility details.
-- **Multi-Profile Curve Editor:** Save, switch, rename, and export/import custom nit curves (`.json`), or inspect the live stock ROM curve (`getValueByCurve`) directly on the chart.
-- **Settings:** Instant `SystemProperties` toggles with OS version badges (`OOS/COS 12–17`, `COS/OOS 16–17`, `ColorOS 17`).
-- **Live Logcat & Tools:** Built-in root log viewer (`BLOCKED`, `HOOK`, `PASS`), Soft Reboot button (`killall system_server`), one-click GitHub updater, and 4PDA/GitHub diagnostic report generator.
-- **FAQ:** Up-to-date technical breakdown for ColorOS/OxygenOS 12–17 with collapsible Changelog.
+- **Overview (v1.5.0):** Unified Module Status & Protection Statistics card (`7/7` hook verification + live counters), toggleable `MAIN`, `AUX` (`tcs3449`), and `PWM • #7` (`tcs3720`) sensors, exact 12-bit ColorOS 17 nit readout (`%` & `nits`), and custom 7-point curve editor with `.json` profiles.
+- **Settings:** Numbered controls (`[Hook #1]`..`[Hook #5]`, `[Hooks #1–2]`) with OS compatibility badges and instant live apply banner.
+- **Live Logs & Tools:** Root log reader with chronological merge (Vector + disk log + logcat), universal `su` support (Magisk/KSUN/APatch), Quick Soft Reboot (`killall system_server`), in-app APK updater, and collapsible diagnostic commands.
+- **FAQ:** Detailed **7-Hook Reference Guide** explaining every hook and its target method, plus collapsible Changelog.
 
 ### 🚀 Installation
 1. Download the latest APK from the [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases) page.
@@ -78,20 +80,22 @@ Expected output upon successful block:
 1. `OplusAutomaticBrightnessController` заводит таймер на **10 минут** при выключении экрана, вызывая `resetAutoBrightness()` / `resetAutoBrightness(int)` (путь DragOpt в ColorOS 17) и `OplusBrightnessAmbientAdapter.resetAmbientAdapter("AutoReset")`.
 2. В ColorOS 17 постпроцессоры (`OplusFeatureDarkEnvReduceBrightness` через 20 мин и `OplusFeatureReduceBrightness` по приложениям) дополнительно занижают ниты, а `handleStableForceChange`, `handleSmallChangeAnimating`, `StabilityProcess` и `LuxEventResult.calculateAuxLux` вызывают дрейф и скачки яркости на ровном месте.
 
-### 🛡️ Как устроена защита
-- **Защита кривой (12–17):** перехват **обеих** перегрузок `resetAutoBrightness()` и `resetAutoBrightness(int)` + `resetAmbientAdapter(String)` по стеку `lambda$new$1` и `AlarmManager$ListenerWrapper`.
-- **Анти-дрейф и стабилизация задержки (1.4.0):** подавление фоновых подстроек `OplusBrightnessAmbientAdapter` в покое и ограничение `StabilityProcess.getAccelerateScale() <= 1.0f`.
-- **Ночной минимум 8.5 нит и отмена Smart Dimming (1.4.0):** пропуск 20-минутного затемнения `OplusFeatureDarkEnvReduceBrightness`, порог `>= 8.5` нит в `convertNitToBrightness()` и отключение поприложенческого затемнения `OplusFeatureReduceBrightness`.
-- **Балансировщик 360° Aux-датчика (1.4.0):** сглаживание скачков тылового датчика в помещении в `LuxEvent$LuxEventResult.calculateAuxLux()`.
-- **Деоптимизация ART и Fail-Open:** все перехваты защищены от инлайнинга и отказоустойчивы.
-- **Настройки на лету:** переключатели применяются мгновенно через `SystemProperties` (`persist.autobrightness.*`).
+### 🛡️ Как устроена защита (7 подтверждённых хуков)
+1. **Хук #1 — Защита сброса кривой:** перехватывает обе перегрузки `resetAutoBrightness()` и `resetAutoBrightness(int)` (путь DragOpt в ColorOS 17) от таймера сна (`rule=lambda` и `rule=alarm`).
+2. **Хук #2 — Защита Ambient Adapter:** блокирует `OplusBrightnessAmbientAdapter.resetAmbientAdapter(String)` при `AutoReset` и срабатывании будильника.
+3. **Хук #3 — Анти-дрейф в покое:** подавляет фоновые микроподстройки `handleStableForceChange` и `handleSmallChangeAnimating` при ровном освещении.
+4. **Хук #4 — Ночной минимум и DarkEnv Guard (`4a + 4b`):** отключает 20-минутное затемнение в темноте (`OplusFeatureDarkEnvReduceBrightness`) и удерживает Авто-порог `8.5 нит` или ручной безусловный пол `1–150 нит` (`convertNitToBrightness`).
+5. **Хук #5 — Балансировщик 360° Aux-датчика:** сглаживает скачки тылового датчика в помещении (`>10 lx` и `>1.15x`) в `calculateAuxLux()` (60% смешивание + EMA 0.35), а также отвечает за выключатели `MAIN`/`AUX`.
+6. **Хук #6 — Живая пользовательская кривая:** подменяет кривую в `OplusDisplayBrightnessModel.getValueByCurve("", lux)` по 7 точкам (`0–10 000 lx`) и считывает реальную штатную кривую `STOCK_CURVE`.
+7. **Хук #7 — Выключатель подэкранного PWM-датчика:** отсекает события `high_pwm_rgb` (`tcs3720`) в `SystemSensorManager$SensorEventQueue` при отключении на главном экране.
+- **Zero-Root Vector IPC и SystemProperties:** нативный **Vector Framework (LibXposed API 102)** синхронизирует настройки мгновенно без `su` через `RemotePreferences`, с полным резервом через `persist.autobrightness.*` для LSPosed.
+- **Деоптимизация ART и постоянный журнал:** все 7 хуков защищены от инлайнинга, работают отказоустойчиво и сохраняют статистику `GUARD_STATS` в `/data/system/autobrightness_guard.log`.
 
 ### ✨ Возможности приложения-компаньона
-- **Обзор (1.4.4):** живая верификация всех 10 хуков в `system_server` (статус и число срабатываний), раздельное отключение датчиков света (`MAIN`, `AUX`, подэкранный `PWM tcs3720`), точный вывод яркости экрана (`%` и расчётные `нит`) и реальные данные о прошивке/модели.
-- **Редактор профилей кривой:** несколько сохраняемых профилей с экспортом/импортом в JSON, отображение реальной штатной кривой ROM и кнопка копирования штатной кривой в профиль.
-- **Настройки:** мгновенные переключатели через `SystemProperties` с пометками актуальности для версий прошивки (12–17 / 16–17 / 17).
-- **Логи и Инструменты:** чтение логов LSPosed/logcat, кнопка **Soft Reboot**, обновление с GitHub в 1 клик и генератор диагностических отчётов.
-- **Справка:** актуальное описание работы всех модулей версии 1.4.4 и сворачивающаяся история версий.
+- **Обзор (v1.5.0):** объединённая карточка статуса (`7/7` хуков) и статистики защиты, раздельное отключение `MAIN`, `AUX` и `PWM • #7`, точный вывод яркости (`%` и `нит` с поддержкой шкалы `6..4095` и HBM в ColorOS 17), а также 7-точечный редактор профилей кривой (`.json`).
+- **Настройки:** пронумерованные переключатели (`[Хук #1]`..`[Хук #5]`, `[Хуки #1–2]`) с бейджами совместимости версий ОС и мгновенным применением.
+- **Логи и Инструменты:** склейка журналов Vector + дискового лога + logcat, универсальная поддержка Root (Magisk/KSUN/BakaSU/APatch), кнопка **Soft Reboot**, встроенный установщик обновлений APK и сворачиваемые команды терминала.
+- **Справка:** подробный **справочник всех 7 хуков** с описанием методов и сворачиваемая история версий.
 
 ### 🚀 Установка
 1. Скачайте APK со страницы [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases).
@@ -129,21 +133,20 @@ su -c "logcat -d -s AutoBrightnessGuard"
 
 У результаті після кожного тривалого сну дисплей або засліплює очі в темряві, або стає занадто тьмяним.
 
-### 🛡️ Як працює захист
-- **Дворівневе перехоплення:**
-  1. `rule=lambda`: перехоплення виклику синтетичної лямбди контролера (`lambda$new$1`).
-  2. `rule=alarm`: резервне структурне перехоплення через виклик `android.app.AlarmManager$ListenerWrapper`. Якщо в майбутніх OTA-оновленнях назву лямбди змінять, модуль продовжить стабільно працювати.
-- **Вторинне перехоплення (Новинка 1.2b):** блокує скидання параметрів адаптера `OplusBrightnessAmbientAdapter`.
-- **Деоптимізація ART:** забороняє компілятору оптимізувати (інлайнити) методи, гарантуючи надійне перехоплення.
-- **Безпека Fail-Open:** будь-які сторонні системні виклики пропускаються штатно (бутлупи виключені).
-- **RemotePreferences:** налаштування змінюються в реальному часі без необхідності перезавантаження смартфона.
+### 🛡️ Як працює захист (7 підтверджених хуків)
+1. **Хук #1 — Захист скидання кривої:** перехоплює обидва перевантаження `resetAutoBrightness()` і `resetAutoBrightness(int)` (ColorOS 17 DragOpt) від таймера сну (`rule=lambda` та `rule=alarm`).
+2. **Хук #2 — Захист Ambient Adapter:** блокує `OplusBrightnessAmbientAdapter.resetAmbientAdapter(String)` під час `AutoReset` та будильників сну.
+3. **Хук #3 — Анти-дрейф у спокої:** пригнічує фонові мікропідлаштування `handleStableForceChange` та `handleSmallChangeAnimating` при рівному освітленні.
+4. **Хук #4 — Нічний мінімум і DarkEnv Guard (`4a + 4b`):** вимикає 20-хвилинне затемнення в темряві та утримує Авто `8.5 ніт` або безумовний поріг `1–150 ніт` (`convertNitToBrightness`).
+5. **Хук #5 — Балансувальник 360° Aux-датчика:** згладжує стрибки тилового датчика в приміщенні (`>10 lx` і `>1.15x`) у `calculateAuxLux()`, а також обслуговує вимикачі `MAIN`/`AUX`.
+6. **Хук #6 — Жива користувацька крива:** підмінює криву в `OplusDisplayBrightnessModel.getValueByCurve("", lux)` за 7 точками (`0–10 000 lx`) і зчитує штатну `STOCK_CURVE`.
+7. **Хук #7 — Вимикач підекранного PWM-датчика:** відсікає потік подій `high_pwm_rgb` (`tcs3720`) у `SystemSensorManager$SensorEventQueue`.
+- **Zero-Root Vector IPC і SystemProperties:** нативний **Vector Framework (LibXposed API 102)** синхронізує налаштування миттєво без `su` через `RemotePreferences` із резервом `persist.autobrightness.*` для LSPosed.
 
 ### ✨ Можливості додатка-компаньйона
-- **Огляд:** статус готовності модуля, перевірка сумісності пристрою (OnePlus/OPPO/Realme, версія Android та API) і перемикач приховування іконки в лаунчері.
-- **Налаштування (1.2b):** окреме керування блокуванням скидання яскравості, адаптера світла, суворий режим Alarm та розширене логування.
-- **Логи (Live Logcat):** вбудований перегляд системного журналу модуля через Root (`su`) з кольоровим підсвічуванням подій.
-- **Інструменти та Оновлення:** швидкий запуск LSPosed Manager, перевірка та завантаження оновлень з GitHub в один дотик, команди термінала та звіт для форумів.
-- **Довідка:** технічний аналіз бага OxygenOS та відповіді на поширені запитання.
+- **Огляд (v1.5.0):** об'єднана картка статусу (`7/7` хуків) і статистики, вимикачі датчиків `MAIN`, `AUX`, `PWM • #7`, точний вивід яскравості (`%` і `ніт`) та 7-точковий редактор профілів кривої (`.json`).
+- **Налаштування:** пронумеровані перемикачі (`[Хук #1]`..`[Хук #5]`, `[Хуки #1–2]`) із миттєвим застосуванням на льоту.
+- **Логи, Інструменти і Довідка:** журнал із дисковим кільцевим буфером `/data/system/autobrightness_guard.log`, Soft Reboot, автооновлення APK, та детальний **довідник усіх 7 хуків** у Довідці.
 
 ### 🚀 Встановлення
 1. Завантажте останній APK зі сторінки [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases).

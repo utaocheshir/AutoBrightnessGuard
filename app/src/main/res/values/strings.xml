@@ -45,7 +45,7 @@
     <string name="stats_pill_drift">Anti-Drift: %1$d</string>
     <string name="stats_pill_floor">Floor/Dark: %1$d</string>
     <string name="stats_pill_curve">Curve: %1$d</string>
-    <string name="stats_pill_stability">Sensor/Hyst: %1$d</string>
+    <string name="stats_pill_stability">Sensors: %1$d</string>
     <string name="hooks_check_title">system_server hooks (%1$d/%2$d)</string>
     <string name="hooks_last_boot">Last system_server boot: %1$s</string>
     <string name="hook_detail_installed">Hook verified in system_server</string>
@@ -70,7 +70,7 @@
 
     <!-- Custom Curve Editor Card -->
     <string name="curve_editor_title">Custom Brightness Curve</string>
-    <string name="curve_editor_subtitle">Live override for OplusDisplayBrightnessModel.getValueByCurve</string>
+    <string name="curve_editor_subtitle">Hook #6 • Live override for OplusDisplayBrightnessModel.getValueByCurve</string>
     <string name="curve_badge_active">CUSTOM CURVE LIVE</string>
     <string name="curve_badge_stock">STOCK ROM CURVE</string>
     <string name="curve_badge_stock_live">STOCK ROM (LIVE)</string>
@@ -105,15 +105,15 @@
     <string name="settings_section_reset">Reset Protection</string>
     <string name="settings_section_brightness">Brightness &amp; Stability</string>
     <string name="settings_section_app">App &amp; Diagnostics</string>
-    <string name="pref_block_reset_title">Block Brightness Curve Reset</string>
+    <string name="pref_block_reset_title">[Hook #1] Block Brightness Curve Reset</string>
     <string name="pref_block_reset_desc">Blocks both resetAutoBrightness() and resetAutoBrightness(int) triggered by the screen-off alarm (including ColorOS 17 DragOpt).</string>
-    <string name="pref_block_ambient_title">Block Ambient Adapter Reset</string>
+    <string name="pref_block_ambient_title">[Hook #2] Block Ambient Adapter Reset</string>
     <string name="pref_block_ambient_desc">Blocks resetAmbientAdapter() in OplusBrightnessAmbientAdapter on AutoReset and timer alarms.</string>
-    <string name="pref_strict_alarm_title">Strict Alarm Rule Only</string>
+    <string name="pref_strict_alarm_title">[Hooks #1–2] Strict Alarm Rule Only</string>
     <string name="pref_strict_alarm_desc">Bypasses lambda name matching and solely checks AlarmManager stack frames.</string>
-    <string name="pref_stability_guard_title">Anti-Drift Ambient Lock</string>
+    <string name="pref_stability_guard_title">[Hook #3] Anti-Drift Ambient Lock</string>
     <string name="pref_stability_guard_desc">Blocks micro-drift updates in OplusBrightnessAmbientAdapter (handleStableForceChange / handleSmallChangeAnimating) under steady lighting.</string>
-    <string name="pref_floor_card_title">Minimum Brightness &amp; Dark-Env Guard</string>
+    <string name="pref_floor_card_title">[Hook #4] Minimum Brightness &amp; Dark-Env Guard</string>
     <string name="pref_floor_card_desc">Choose behavior in darkness: Stock (off), Auto 8.5 nits (auto-brightness only + DarkEnv Guard), or Custom unconditional slider floor (+ DarkEnv Guard).</string>
     <string name="floor_mode_off">Off (Stock)</string>
     <string name="floor_mode_auto">Auto 8.5 nits</string>
@@ -121,15 +121,9 @@
     <string name="pref_custom_floor_title">Manual Unconditional Minimum Floor</string>
     <string name="pref_custom_floor_desc">Backlight NEVER drops below this level (1–150 nits) in any mode or app while the screen is lit.</string>
     <string name="pref_custom_floor_value">Minimum: %1$.1f nits (Unconditional)</string>
-    <string name="pref_hysteresis_title">Ambient Lux Hysteresis Damping</string>
-    <string name="pref_hysteresis_desc">Widens StabilityProcess.getLargeChangeLimit() dead-zone bounds so minor room light changes do not pump brightness.</string>
-    <string name="pref_hysteresis_value">Dead-zone scale: %1$.1fx</string>
-    <string name="pref_debounce_lock_title">Debounce Window Stabilizer</string>
-    <string name="pref_debounce_lock_desc">Caps StabilityProcess.getAccelerateScale() at 1.0x so LuxQueueProcess keeps full SceneConfig timers against hand tremor jitter.</string>
-    <string name="pref_smart_dimming_title">Per-App Smart Dimming Bypass</string>
-    <string name="pref_smart_dimming_desc">Disables AppFossReduceConfig app-specific dimming in OplusFeatureReduceBrightness (browsers, messengers, readers).</string>
-    <string name="pref_dual_sensor_title">Dual 360° Aux Sensor Smoother</string>
-    <string name="pref_dual_sensor_desc">Smoothly blends and EMA-filters indoor rear-sensor changes in LuxEventResult.calculateAuxLux() instead of snapping abruptly or blocking rear light.</string>
+    <string name="pref_dual_sensor_title">[Hook #5] Dual 360° Aux Sensor Smoother</string>
+    <string name="pref_dual_sensor_desc">Smoothly blends and EMA-filters indoor rear-sensor spikes (&gt;10 lx &amp; &gt;1.15x) in calculateAuxLux(). Also backs MAIN/AUX switches on Overview.</string>
+    <string name="settings_overview_hooks_hint">Note: Hook #6 (Custom 7-Point Brightness Curve) and Hook #7 (PWM Sensor Kill-Switch, plus MAIN/AUX toggles for Hook #5) are located on the Overview tab.</string>
     <string name="pref_verbose_log_title">Verbose Debug Logging</string>
     <string name="pref_verbose_log_desc">Log periodic post-processing &amp; stability guard hits in Vector / LSPosed / logcat.</string>
     <string name="hide_icon_title">Hide Launcher Icon</string>
@@ -225,7 +219,7 @@
     <!-- FAQ & Changelog Tab -->
     <string name="faq_title">FAQ &amp; Changelog</string>
     <string name="faq_q0">What is new in version 1.5.0?</string>
-    <string name="faq_a0">1. Vector Framework &amp; LibXposed API 102 priority: native XposedService + RemotePreferences sync allows changing settings and custom curves in real time WITHOUT requiring Root IPC (while preserving full SystemProperties fallback for legacy LSPosed forks).\n2. Fixed Active Protection Statistics card: the module now emits throttled GUARD_STATS telemetry snapshots and pins BLOCKED / GUARD_STATS lines across long uptimes, showing both sleep-reset blocks and active protection events (Anti-Drift, Floor/DarkEnv, Custom Curve, Stability/Hysteresis).\n3. Improved UI layout &amp; OLED palette: unified Status + Protection card, grouped Settings, moved Device Compatibility to Tools, and made terminal commands collapsible.</string>
+    <string name="faq_a0">1. Clean 7/7 Verified Hook Engine: removed 3 uncalled ColorOS 17 hooks (getAccelerateScale, isReduceDisabled, getLargeChangeLimit) verified as zero-hit over 24h runtime telemetry, numbered all settings toggles (#1–#7), and added a complete 7-hook reference card right below.\n2. Vector Framework &amp; LibXposed API 102 priority: native XposedService + RemotePreferences sync allows instant zero-root settings updates while preserving full SystemProperties fallback for legacy LSPosed forks.\n3. Persistent ring log &amp; accurate statistics: GUARD_STATS telemetry + persistent disk log (/data/system/autobrightness_guard.log), burst-coalesced counters, 10 lx Aux deadband filtering, ColorOS 17 calibration, and unified OLED/Light M3 UI.</string>
     <string name="faq_q1">What is the OxygenOS / ColorOS auto-brightness bug?</string>
     <string name="faq_a1">On OnePlus / OPPO devices (OxygenOS / ColorOS 12–17), OplusAutomaticBrightnessController schedules an AlarmManager timer (usually 10 minutes) when the screen turns off. When triggered, resetAutoBrightness() (or resetAutoBrightness(1) with DragOpt on ColorOS 17) and OplusBrightnessAmbientAdapter.resetAmbientAdapter("AutoReset") erase your learned brightness curve.</string>
     <string name="faq_q2">How do Vector Framework and KSUN + SUSFS work together?</string>
@@ -233,7 +227,30 @@
     <string name="faq_q3">Is a reboot required after updating or changing settings?</string>
     <string name="faq_a3">Changing toggles, minimum floor, sensor switches, or custom curve points applies INSTANTLY with zero reboot. Only upgrading the module APK (when hook code changes inside system_server) requires a 5-second Soft Reboot (available in Tools) or full reboot.</string>
     <string name="faq_q4">Does the module increase battery drain?</string>
-    <string name="faq_a4">No. Hardware light sensors and brightness observers register strictly while the app is open on screen (ON_RESUME / ON_PAUSE). Disabled sensors (MAIN / AUX / PWM) unsubscribe completely. Hooks inside system_server allocate zero background threads or timers and throttle stats logging to at most once every 60 seconds when counts change.</string>
+    <string name="faq_a4">No. Hardware light sensors and brightness observers register strictly while the app is open on screen (ON_RESUME / ON_PAUSE). Disabled sensors (MAIN / AUX / PWM) unsubscribe completely. Inside system_server, all 7 hooks run with zero background threads or timers, burst-coalesced telemetry, and at most one GUARD_STATS write per 60 seconds.</string>
+    <string name="hooks_guide_title">Detailed Reference: Active 7-Hook Engine</string>
+    <string name="hooks_guide_subtitle">How each hook inside system_server works and where to configure it</string>
+    <string name="hook_guide_1_title">Brightness Curve Reset Guard</string>
+    <string name="hook_guide_1_method">OplusAutomaticBrightnessController.resetAutoBrightness() / (int)</string>
+    <string name="hook_guide_1_desc">Intercepts both variants (including ColorOS 17 DragOpt resetAutoBrightness(1)). Blocks only screen-off sleep timer resets (lambda$new$1 or AlarmManager$ListenerWrapper stack). Turning auto-brightness off/on manually passes undisturbed. Controlled in Settings [Hook #1].</string>
+    <string name="hook_guide_2_title">Ambient Adapter Reset Guard</string>
+    <string name="hook_guide_2_method">OplusBrightnessAmbientAdapter.resetAmbientAdapter(String)</string>
+    <string name="hook_guide_2_desc">Blocks sleep-timer resets of the ambient lux interpolation adapter (reason="AutoReset", "resetAutoBrightness", or AlarmManager stack) so adaptive spline memory survives screen-off standby. Controlled in Settings [Hook #2].</string>
+    <string name="hook_guide_3_title">Steady-Light Anti-Drift</string>
+    <string name="hook_guide_3_method">OplusBrightnessAmbientAdapter.handleStableForceChange / handleSmallChangeAnimating</string>
+    <string name="hook_guide_3_desc">Suppresses background micro-adjustments (RecoverChange / StableForceChange) that cause brightness to drift upward or downward while sitting under constant room lighting. Controlled in Settings [Hook #3].</string>
+    <string name="hook_guide_4_title">Minimum Brightness &amp; DarkEnv Guard (4a + 4b)</string>
+    <string name="hook_guide_4_method">DarkEnvReduceBrightness.shouldSkipProcessing + PostProcessing.convertNitToBrightness</string>
+    <string name="hook_guide_4_desc">Dual sub-hook: 4a disables hidden 20-minute progressive dimming in dark rooms; 4b enforces either an automatic 8.5 nit night floor (auto-brightness only, paused while dragging the slider) or an unconditional 1–150 nit manual floor across all apps. Controlled in Settings [Hook #4].</string>
+    <string name="hook_guide_5_title">360° Aux Sensor Balancer &amp; MAIN/AUX Switches</string>
+    <string name="hook_guide_5_method">LuxEvent$LuxEventResult.calculateAuxLux(float, float, ...)</string>
+    <string name="hook_guide_5_desc">Filters indoor rear light sensor spikes when auxLux exceeds mainLux by &gt;10 lx and &gt;1.15x (blending 60% toward auxLux + 0.35 EMA smoothing below 200 lx; unfiltered above 200 lx outdoors). Also executes MAIN and AUX sensor disable toggles from Overview. Controlled in Settings [Hook #5] &amp; Overview.</string>
+    <string name="hook_guide_6_title">Live Custom 7-Point Curve Override</string>
+    <string name="hook_guide_6_method">OplusDisplayBrightnessModel.getValueByCurve(String, float)</string>
+    <string name="hook_guide_6_desc">Samples the device\'s real stock ROM spline (STOCK_CURVE) and, when Custom Curve is enabled, substitutes your 7-point log-lux to nit curve (0–10,000 lx) in real time without reboot; above 10,000 lx yields to stock HBM/sunlight peak if higher. Controlled on Overview → Curve Editor.</string>
+    <string name="hook_guide_7_title">Under-Display PWM Sensor Switch</string>
+    <string name="hook_guide_7_method">android.hardware.SystemSensorManager$SensorEventQueue.dispatchSensorEvent</string>
+    <string name="hook_guide_7_desc">Caches high_pwm_rgb (tcs3720) sensor handles inside system_server with zero allocation and drops its event stream when toggled OFF on Overview, stopping high-frequency under-display PWM readings when undesired. Controlled on Overview → Brightness &amp; Sensors [PWM • #7].</string>
     <string name="changelog_title">Version History (Changelog)</string>
     <string name="changelog_hide">Hide version history</string>
     <string name="changelog_show">Tap to expand (1.1 – 1.5.0)</string>

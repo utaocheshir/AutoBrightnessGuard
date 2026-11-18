@@ -12,10 +12,6 @@ public final class BrightnessMath {
     public static final float MAX_AUX_INDOOR_LUX = 200.0f;
     public static final float AUX_DEADBAND_LUX = 10.0f;
 
-    public static final float DEFAULT_HYSTERESIS_SCALE = 1.8f;
-    public static final float MIN_HYSTERESIS_SCALE = 1.0f;
-    public static final float MAX_HYSTERESIS_SCALE = 3.0f;
-
     public static final int CURVE_POINT_COUNT = 7;
     public static final float MIN_CURVE_NIT = 2.0f;
     public static final float MAX_CURVE_NIT = 3500.0f;
@@ -102,34 +98,6 @@ public final class BrightnessMath {
         } catch (NumberFormatException ignored) {
             return defaultVal;
         }
-    }
-
-    /**
-     * Widens StabilityProcess.getLargeChangeLimit(targetLux) [left, right] bounds around targetLux
-     * by scale (> 1.0f), while preserving ColorOS's negative left sentinel (-1.0f) when dark
-     * downward hysteresis is disabled.
-     */
-    public static float[] widenRangeBounds(float targetLux, float left, float right, float scale) {
-        if (Float.isNaN(targetLux) || Float.isNaN(left) || Float.isNaN(right) || scale <= 1.01f) {
-            return new float[] { left, right };
-        }
-        float effectiveScale = clamp(scale, MIN_HYSTERESIS_SCALE, MAX_HYSTERESIS_SCALE);
-        float extraScale = effectiveScale - 1.0f;
-
-        float newLeft;
-        if (left < 0f) {
-            newLeft = left;
-        } else {
-            float baseDown = Math.max(0f, targetLux - left);
-            float widenedDown = baseDown * effectiveScale + 2.5f * extraScale;
-            newLeft = Math.max(0f, targetLux - widenedDown);
-        }
-
-        float baseUp = Math.max(2.0f, right - targetLux);
-        float widenedUp = baseUp * effectiveScale + 5.0f * extraScale;
-        float newRight = targetLux + widenedUp;
-
-        return new float[] { newLeft, newRight };
     }
 
     public static CurveConfig parseCurveConfig(String raw) {

@@ -766,67 +766,52 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:10",
-                message = "v${BuildConfig.VERSION_NAME} (ColorOS 17 Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
+                message = "v${BuildConfig.VERSION_NAME} (Vector/LSPosed Verified Engine) starting, sdk=${Build.VERSION.SDK_INT}, build=${Build.FINGERPRINT}"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [1/10] controller resetAutoBrightness installed (variants=2, lambda=true)"
+                message = "Hook [1/7] controller resetAutoBrightness installed (variants=2, lambda=true)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [2/10] ambient resetAmbientAdapter(String) installed"
+                message = "Hook [2/7] ambient resetAmbientAdapter(String) installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [3/10] stability anti-drift installed (targets=2)"
+                message = "Hook [3/7] stability anti-drift installed (targets=2)"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [4/10] StabilityProcess.getAccelerateScale installed (overloads=3)"
+                message = "Hook [4a/7] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [5a/10] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed"
+                message = "Hook [4b/7] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (8.5 nits) installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [5b/10] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (8.5 nits) installed"
+                message = "Hook [5/7] LuxEvent\$LuxEventResult.calculateAuxLux balancer installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [6/10] OplusFeatureReduceBrightness.isReduceDisabled installed"
+                message = "Hook [6/7] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed"
             ),
             LogEntry(
                 type = LogType.HOOK,
                 time = "20:00:11",
-                message = "Hook [7/10] LuxEvent\$LuxEventResult.calculateAuxLux balancer installed"
-            ),
-            LogEntry(
-                type = LogType.HOOK,
-                time = "20:00:11",
-                message = "Hook [8/10] StabilityProcess hysteresis widener installed (targets=2)"
-            ),
-            LogEntry(
-                type = LogType.HOOK,
-                time = "20:00:11",
-                message = "Hook [9/10] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed"
-            ),
-            LogEntry(
-                type = LogType.HOOK,
-                time = "20:00:11",
-                message = "Hook [10/10] SystemSensorManager\$SensorEventQueue high_pwm_rgb guard installed"
+                message = "Hook [7/7] SystemSensorManager\$SensorEventQueue high_pwm_rgb guard installed"
             ),
             LogEntry(
                 type = LogType.INFO,
                 time = "20:00:11",
-                message = "HOOK_SUMMARY:installed=10/10,version=${BuildConfig.VERSION_NAME},sdk=${Build.VERSION.SDK_INT},hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK"
+                message = "HOOK_SUMMARY:installed=7/7,version=${BuildConfig.VERSION_NAME},sdk=${Build.VERSION.SDK_INT},hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK"
             ),
             LogEntry(
                 type = LogType.INFO,
@@ -846,17 +831,17 @@ object RootHelper {
             LogEntry(
                 type = LogType.INFO,
                 time = "20:15:03",
-                message = "GUARD hysteresis (1.8x) at 45.0 lx: [34.0..58.0] -> [23.2..72.4]"
+                message = "GUARD dual-sensor smoothed auxLux (22.0, 48.0) -> 31.1"
             ),
             LogEntry(
                 type = LogType.INFO,
                 time = "20:15:04",
-                message = "GUARD_STATS:reset=1,ambient=1,drift=4,debounce=3,floor=2,darkenv=1,dimming=2,aux=3,hyst=5,curve=6,pwm=0,last_block_ms=0"
+                message = "GUARD_STATS:reset=1,ambient=1,drift=4,floor=2,darkenv=1,aux=3,curve=6,pwm=1,last_block_ms=0,hooks=7/7,hook_mask=1111111,ver=${BuildConfig.VERSION_NAME}"
             ),
             LogEntry(
                 type = LogType.PASS,
                 time = "23:14:01",
-                message = "passed resetAutoBrightness #1 from VMStack.getThreadStackTrace"
+                message = "passed resetAutoBrightness #1 from OplusDisplayPowerControllerExtImpl.handleBrightnessModeChange"
             )
         ).reversed()
     }
@@ -888,10 +873,7 @@ object RootHelper {
                 msg.contains("anti-drift suppressed") -> logDrift++
                 msg.contains("DarkEnv") || msg.contains("floor clamped") -> logFloorDark++
                 msg.contains("CURVE override") -> logCurve++
-                msg.contains("debounce accelerateScale") ||
-                    msg.contains("per-app dimming") ||
-                    msg.contains("dual-sensor smoothed") ||
-                    msg.contains("GUARD hysteresis") ||
+                msg.contains("dual-sensor smoothed") ||
                     msg.contains("GUARD PWM sensor") -> logStabilitySensors++
             }
         }
@@ -903,7 +885,7 @@ object RootHelper {
             val idx = entry.message.indexOf("GUARD_STATS:")
             if (idx >= 0) {
                 val payload = entry.message.substring(idx + "GUARD_STATS:".length).trim()
-                val map = HashMap<String, Long>(14)
+                val map = HashMap<String, Long>(12)
                 payload.split(',').forEach { token ->
                     val eq = token.indexOf('=')
                     if (eq > 0) {
@@ -913,8 +895,8 @@ object RootHelper {
                     }
                 }
                 val sum = listOf(
-                    "reset", "ambient", "drift", "debounce", "floor",
-                    "darkenv", "dimming", "aux", "hyst", "curve", "pwm"
+                    "reset", "ambient", "drift", "floor",
+                    "darkenv", "aux", "curve", "pwm"
                 ).sumOf { map[it] ?: 0L }
                 if (sum >= bestSum) {
                     bestSum = sum
@@ -926,12 +908,9 @@ object RootHelper {
         val statsReset = (bestSnapshot?.get("reset") ?: 0L).toInt()
         val statsAmbient = (bestSnapshot?.get("ambient") ?: 0L).toInt()
         val statsDrift = (bestSnapshot?.get("drift") ?: 0L).toInt()
-        val statsDebounce = (bestSnapshot?.get("debounce") ?: 0L).toInt()
         val statsFloor = (bestSnapshot?.get("floor") ?: 0L).toInt()
         val statsDarkEnv = (bestSnapshot?.get("darkenv") ?: 0L).toInt()
-        val statsDimming = (bestSnapshot?.get("dimming") ?: 0L).toInt()
         val statsAux = (bestSnapshot?.get("aux") ?: 0L).toInt()
-        val statsHyst = (bestSnapshot?.get("hyst") ?: 0L).toInt()
         val statsCurve = (bestSnapshot?.get("curve") ?: 0L).toInt()
         val statsPwm = (bestSnapshot?.get("pwm") ?: 0L).toInt()
         val lastBlockMs = bestSnapshot?.get("last_block_ms") ?: 0L
@@ -943,10 +922,7 @@ object RootHelper {
         val antiDriftCount = maxOf(logDrift, statsDrift)
         val floorDarkCount = maxOf(logFloorDark, statsFloor + statsDarkEnv)
         val curveCount = maxOf(logCurve, statsCurve)
-        val stabilitySensorsCount = maxOf(
-            logStabilitySensors,
-            statsDebounce + statsDimming + statsAux + statsHyst + statsPwm
-        )
+        val stabilitySensorsCount = maxOf(logStabilitySensors, statsAux + statsPwm)
         val totalGuardInterventions = antiDriftCount + floorDarkCount + curveCount + stabilitySensorsCount
 
         val resolvedLastTime = latestBlocked?.time?.takeIf { it.isNotBlank() }
@@ -998,13 +974,10 @@ object RootHelper {
             1 to "Reset Guard (resetAutoBrightness)",
             2 to "Ambient Adapter (resetAmbientAdapter)",
             3 to "Anti-Drift (StableForce / Recover)",
-            4 to "Debounce Lock (getAccelerateScale)",
-            5 to "Night Floor & DarkEnv (8.5 nit)",
-            6 to "App Smart Dimming (isReduceDisabled)",
-            7 to "360° Aux Smoother (calculateAuxLux)",
-            8 to "Hysteresis Widener (getLargeChangeLimit)",
-            9 to "Live Curve (getValueByCurve)",
-            10 to "Under-Display PWM (high_pwm_rgb)"
+            4 to "Night Floor & DarkEnv (8.5 nit)",
+            5 to "360° Aux Smoother (calculateAuxLux)",
+            6 to "Live Curve (getValueByCurve)",
+            7 to "Under-Display PWM (high_pwm_rgb)"
         )
 
         if (logs.isEmpty()) {
@@ -1046,9 +1019,9 @@ object RootHelper {
             if (loadedVersion.isEmpty()) {
                 loadedVersion = Regex("ver=([^,\\s]+)").find(latestGuardStats)?.groupValues?.get(1).orEmpty()
             }
-            val mask = Regex("hook_mask=([01]{10})").find(latestGuardStats)?.groupValues?.get(1)
-            if (mask != null) {
-                for (i in 0 until minOf(mask.length, hookTitles.size)) {
+            val mask = Regex("hook_mask=([01]{7})\\b").find(latestGuardStats)?.groupValues?.get(1)
+            if (mask != null && mask.length == hookTitles.size) {
+                for (i in mask.indices) {
                     stateMap[i + 1] = if (mask[i] == '1') HookState.INSTALLED else HookState.SKIPPED
                 }
             }
@@ -1061,26 +1034,29 @@ object RootHelper {
                 loadedVersion = Regex("version=([^,\\s]+)").find(summaryLine)?.groupValues?.get(1).orEmpty()
             }
             val hooksPart = Regex("hooks=([^\\s]+)").find(summaryLine)?.groupValues?.get(1).orEmpty()
-            hooksPart.split(',').forEach { token ->
-                val parts = token.split(':')
-                if (parts.size == 2) {
-                    val idx = parts[0].toIntOrNull()
-                    if (idx != null) {
-                        stateMap[idx] = if (parts[1] == "OK") HookState.INSTALLED else HookState.SKIPPED
+            val tokens = hooksPart.split(',')
+            if (tokens.size == hookTitles.size) {
+                tokens.forEach { token ->
+                    val parts = token.split(':')
+                    if (parts.size == 2) {
+                        val idx = parts[0].toIntOrNull()
+                        if (idx != null && idx in 1..hookTitles.size) {
+                            stateMap[idx] = if (parts[1] == "OK") HookState.INSTALLED else HookState.SKIPPED
+                        }
                     }
                 }
             }
         }
 
-        var has5aOk = false
-        var has5bOk = false
-        var has5aSkip = false
-        var has5bSkip = false
+        var has4aOk = false
+        var has4bOk = false
+        var has4aSkip = false
+        var has4bSkip = false
 
         for (entry in session) {
             val msg = entry.message
             // Hook installation lines
-            val hookMatch = Regex("Hook \\[(\\d+)([ab])?/\\d+\\]\\s*(.*)").find(msg)
+            val hookMatch = Regex("Hook \\[(\\d+)([ab])?/7\\]\\s*(.*)").find(msg)
             if (hookMatch != null) {
                 val id = hookMatch.groupValues[1].toIntOrNull() ?: continue
                 val sub = hookMatch.groupValues[2]
@@ -1088,23 +1064,25 @@ object RootHelper {
                 val isInstalled = body.contains("installed", ignoreCase = true)
                 val isSkipped = body.contains("skipped", ignoreCase = true)
 
-                if (id == 5 && sub.isNotEmpty()) {
+                if (id == 4 && sub.isNotEmpty()) {
                     if (sub == "a") {
-                        if (isInstalled) has5aOk = true else if (isSkipped) has5aSkip = true
+                        if (isInstalled) has4aOk = true else if (isSkipped) has4aSkip = true
                     } else if (sub == "b") {
-                        if (isInstalled) has5bOk = true else if (isSkipped) has5bSkip = true
+                        if (isInstalled) has4bOk = true else if (isSkipped) has4bSkip = true
                     }
-                    stateMap[5] = when {
-                        has5aOk && has5bOk -> HookState.INSTALLED
-                        has5aSkip || has5bSkip -> HookState.SKIPPED
-                        has5aOk || has5bOk -> HookState.INSTALLED
+                    stateMap[4] = when {
+                        has4aOk && has4bOk -> HookState.INSTALLED
+                        has4aSkip || has4bSkip -> HookState.SKIPPED
+                        has4aOk || has4bOk -> HookState.INSTALLED
                         else -> HookState.UNKNOWN
                     }
-                } else {
+                } else if (id in 1..hookTitles.size) {
                     if (isInstalled) stateMap[id] = HookState.INSTALLED
                     else if (isSkipped) stateMap[id] = HookState.SKIPPED
                 }
-                detailMap[id] = body
+                if (id in 1..hookTitles.size) {
+                    detailMap[id] = body
+                }
             }
 
             // Runtime hit counters
@@ -1112,13 +1090,10 @@ object RootHelper {
                 msg.contains("BLOCKED resetAutoBrightness") -> hitMap[1] = (hitMap[1] ?: 0) + 1
                 msg.contains("BLOCKED resetAmbientAdapter") -> hitMap[2] = (hitMap[2] ?: 0) + 1
                 msg.contains("anti-drift suppressed") -> hitMap[3] = (hitMap[3] ?: 0) + 1
-                msg.contains("debounce accelerateScale") -> hitMap[4] = (hitMap[4] ?: 0) + 1
-                msg.contains("DarkEnv") || msg.contains("floor clamped") -> hitMap[5] = (hitMap[5] ?: 0) + 1
-                msg.contains("per-app dimming") -> hitMap[6] = (hitMap[6] ?: 0) + 1
-                msg.contains("dual-sensor smoothed") -> hitMap[7] = (hitMap[7] ?: 0) + 1
-                msg.contains("GUARD hysteresis") -> hitMap[8] = (hitMap[8] ?: 0) + 1
-                msg.contains("CURVE override") -> hitMap[9] = (hitMap[9] ?: 0) + 1
-                msg.contains("GUARD PWM sensor") -> hitMap[10] = (hitMap[10] ?: 0) + 1
+                msg.contains("DarkEnv") || msg.contains("floor clamped") -> hitMap[4] = (hitMap[4] ?: 0) + 1
+                msg.contains("dual-sensor smoothed") -> hitMap[5] = (hitMap[5] ?: 0) + 1
+                msg.contains("CURVE override") -> hitMap[6] = (hitMap[6] ?: 0) + 1
+                msg.contains("GUARD PWM sensor") -> hitMap[7] = (hitMap[7] ?: 0) + 1
             }
         }
 

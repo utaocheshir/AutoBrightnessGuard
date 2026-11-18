@@ -25,9 +25,6 @@ class ModuleUnitTest {
         assertEquals("persist.autobrightness.stability_guard", AutoBrightnessModule.PROP_STABILITY_GUARD)
         assertEquals("persist.autobrightness.min_floor", AutoBrightnessModule.PROP_MIN_FLOOR)
         assertEquals("persist.autobrightness.custom_min_nit", AutoBrightnessModule.PROP_CUSTOM_MIN_NIT)
-        assertEquals("persist.autobrightness.debounce_lock", AutoBrightnessModule.PROP_DEBOUNCE_LOCK)
-        assertEquals("persist.autobrightness.hysteresis", AutoBrightnessModule.PROP_HYSTERESIS)
-        assertEquals("persist.autobrightness.disable_smart_dimming", AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING)
         assertEquals("persist.autobrightness.dual_sensor_guard", AutoBrightnessModule.PROP_DUAL_SENSOR_GUARD)
         assertEquals("persist.autobrightness.disable_main_sensor", AutoBrightnessModule.PROP_DISABLE_MAIN_SENSOR)
         assertEquals("persist.autobrightness.disable_aux_sensor", AutoBrightnessModule.PROP_DISABLE_AUX_SENSOR)
@@ -129,19 +126,6 @@ class ModuleUnitTest {
     }
 
     @Test
-    fun hysteresisRangeWideningCheck() {
-        // Standard indoor bounds around 50 lx: [38, 65] widened at 2.0x -> broader [newLeft, newRight]
-        val widened = BrightnessMath.widenRangeBounds(50f, 38f, 65f, 2.0f)
-        assertTrue(widened[0] < 38f)
-        assertTrue(widened[1] > 65f)
-
-        // Preserve ColorOS negative left sentinel (-1.0f) in very dark conditions
-        val darkWidened = BrightnessMath.widenRangeBounds(2f, -1.0f, 6.0f, 2.0f)
-        assertEquals(-1.0f, darkWidened[0], 0.001f)
-        assertTrue(darkWidened[1] > 6.0f)
-    }
-
-    @Test
     fun screenNitEstimationCheck() {
         assertEquals(0f, BrightnessMath.estimateScreenNits(0f, 2f, 800f), 0.01f)
         assertEquals(800f, BrightnessMath.estimateScreenNits(1f, 2f, 800f), 0.01f)
@@ -175,15 +159,15 @@ class ModuleUnitTest {
         assertEquals(4, stats.antiDriftCount)
         assertEquals(3, stats.floorAndDarkEnvCount)
         assertEquals(6, stats.customCurveCount)
-        assertEquals(13, stats.stabilityAndSensorsCount)
-        assertEquals(26, stats.totalGuardInterventions)
+        assertEquals(4, stats.stabilityAndSensorsCount)
+        assertEquals(17, stats.totalGuardInterventions)
 
         val runtimeStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, AutoBrightnessModule.VERSION)
         assertTrue(runtimeStatus.moduleDetected)
         assertEquals(AutoBrightnessModule.VERSION, runtimeStatus.loadedVersion)
         assertFalse(runtimeStatus.isVersionMismatch)
-        assertEquals(10, runtimeStatus.totalCount)
-        assertEquals(10, runtimeStatus.installedCount)
+        assertEquals(7, runtimeStatus.totalCount)
+        assertEquals(7, runtimeStatus.installedCount)
         assertTrue(runtimeStatus.hooks.all { it.state == HookState.INSTALLED })
 
         val mismatchStatus = RootHelper.parseModuleRuntimeStatus(sampleLogs, "9.9.9")
@@ -200,8 +184,8 @@ class ModuleUnitTest {
     fun guardStatsFallbackWhenBlockedLinesEvictedCheck() {
         val raw = listOf(
             "11-16 09:00:00.001 1000 1234 1234 I AutoBrightnessGuard: v1.5.0 (Vector/LSPosed Verified Engine) starting, sdk=37, remote=true, build=test",
-            "11-16 09:00:01.001 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=10/10,version=1.5.0,sdk=37,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK",
-            "11-16 14:25:00.100 1000 1234 1234 I AutoBrightnessGuard: GUARD_STATS:reset=3,ambient=2,drift=12,debounce=4,floor=5,darkenv=2,dimming=1,aux=8,hyst=7,curve=15,pwm=1,last_block_ms=1731740000000,hooks=10/10,hook_mask=1111111111,ver=1.5.0,probe_h4=12,probe_h6=0,probe_h8=4"
+            "11-16 09:00:01.001 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=7/7,version=1.5.0,sdk=37,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK",
+            "11-16 14:25:00.100 1000 1234 1234 I AutoBrightnessGuard: GUARD_STATS:reset=3,ambient=2,drift=12,floor=5,darkenv=2,aux=8,curve=15,pwm=1,last_block_ms=1731740000000,hooks=7/7,hook_mask=1111111,ver=1.5.0"
         ).joinToString("\n")
         val entries = RootHelper.parseLogs(raw).reversed()
         val stats = RootHelper.computeStats(entries)
@@ -212,23 +196,23 @@ class ModuleUnitTest {
         assertEquals(12, stats.antiDriftCount)
         assertEquals(7, stats.floorAndDarkEnvCount)
         assertEquals(15, stats.customCurveCount)
-        assertEquals(21, stats.stabilityAndSensorsCount)
-        assertEquals(55, stats.totalGuardInterventions)
+        assertEquals(9, stats.stabilityAndSensorsCount)
+        assertEquals(43, stats.totalGuardInterventions)
     }
 
     @Test
     fun vectorAndLogcatBracketParsingCheck() {
-        // Logcat line with brackets inside message (Hook [1/10]) must NOT be chopped at first ']'
-        val logcatHook = "11-15 08:12:01.123  1000  1234  1234 I AutoBrightnessGuard: Hook [1/10] controller resetAutoBrightness installed"
+        // Logcat line with brackets inside message (Hook [1/7]) must NOT be chopped at first ']'
+        val logcatHook = "11-15 08:12:01.123  1000  1234  1234 I AutoBrightnessGuard: Hook [1/7] controller resetAutoBrightness installed"
         assertEquals(
-            "Hook [1/10] controller resetAutoBrightness installed",
+            "Hook [1/7] controller resetAutoBrightness installed",
             RootHelper.cleanLogMessage(logcatHook)
         )
 
-        val logcatHyst = "11-15 08:12:05.456  1000  1234  1234 I AutoBrightnessGuard: GUARD hysteresis (1.8x) at 45.0 lx: [34.0..58.0] -> [23.2..72.4]"
+        val logcatCurve = "11-15 08:12:05.456  1000  1234  1234 I AutoBrightnessGuard: GUARD [curve] lux=45.0 -> 120.5 nits"
         assertEquals(
-            "GUARD hysteresis (1.8x) at 45.0 lx: [34.0..58.0] -> [23.2..72.4]",
-            RootHelper.cleanLogMessage(logcatHyst)
+            "GUARD [curve] lux=45.0 -> 120.5 nits",
+            RootHelper.cleanLogMessage(logcatCurve)
         )
 
         val vectorBoot = "[ 2026-11-15T08:12:00.001 1000:1234:1234 I/Vector(AutoBrightnessGuard) ] v1.5.0 (Vector/LSPosed Verified Engine) starting, sdk=37, remote=true, build=test"
@@ -241,7 +225,7 @@ class ModuleUnitTest {
             vectorBoot,
             logcatHook,
             logcatHook, // duplicate line from boot+tail grep should deduplicate
-            "11-15 08:12:02.000 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=10/10,version=1.5.0,sdk=37,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK,8:OK,9:OK,10:OK"
+            "11-15 08:12:02.000 1000 1234 1234 I AutoBrightnessGuard: HOOK_SUMMARY:installed=7/7,version=1.5.0,sdk=37,hooks=1:OK,2:OK,3:OK,4:OK,5:OK,6:OK,7:OK"
         ).joinToString("\n")
 
         val entries = RootHelper.parseLogs(rawCombined).reversed()
@@ -250,7 +234,7 @@ class ModuleUnitTest {
         assertTrue(status.moduleDetected)
         assertEquals("1.5.0", status.loadedVersion)
         assertFalse(status.isVersionMismatch)
-        assertEquals(10, status.installedCount)
+        assertEquals(7, status.installedCount)
 
         val loadOnlyRaw = "[ 2026-11-16T10:00:00.001 1000:1234:1234 I/Vector(AutoBrightnessGuard) ] onModuleLoaded in system_server (v1.5.0)"
         val loadOnlyStatus = RootHelper.parseModuleRuntimeStatus(RootHelper.parseLogs(loadOnlyRaw), "1.5.0")
@@ -261,12 +245,12 @@ class ModuleUnitTest {
         // Real Vector 2.2 XposedInterface.log() output inside Android logcat prepends packageName
         val realVectorLogcat = listOf(
             "[ 2026-11-16T12:53:15.111 1000: 3743: 3743 D/VectorModuleManager ] Loaded module com.banoku.oplus.autobrightness successfully.",
-            "11-16 13:46:23.913  3743  4156 I AutoBrightnessGuard: com.banoku.oplus.autobrightness: GUARD_STATS:reset=0,ambient=0,drift=1556,debounce=0,floor=43,darkenv=468,dimming=0,aux=48,hyst=0,curve=82,pwm=0,last_block_ms=0"
+            "11-16 13:46:23.913  3743  4156 I AutoBrightnessGuard: com.banoku.oplus.autobrightness: GUARD_STATS:reset=0,ambient=0,drift=1556,floor=43,darkenv=468,aux=48,curve=82,pwm=0,last_block_ms=0"
         ).joinToString("\n")
         val realEntries = RootHelper.parseLogs(realVectorLogcat).reversed()
         assertEquals(2, realEntries.size)
         assertEquals(
-            "GUARD_STATS:reset=0,ambient=0,drift=1556,debounce=0,floor=43,darkenv=468,dimming=0,aux=48,hyst=0,curve=82,pwm=0,last_block_ms=0",
+            "GUARD_STATS:reset=0,ambient=0,drift=1556,floor=43,darkenv=468,aux=48,curve=82,pwm=0,last_block_ms=0",
             realEntries.first().message
         )
         assertEquals("Loaded module com.banoku.oplus.autobrightness successfully.", realEntries.last().message)
@@ -283,25 +267,30 @@ class ModuleUnitTest {
 
     @Test
     fun hookMaskRecoveryChronologicalSortAndCacheRoundTripCheck() {
-        // 1. Recovery of 10/10 hook state & version from GUARD_STATS alone when boot/summary rotated out
-        val statsOnlyRaw = "11-16 14:30:05.123 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=2,ambient=1,drift=14,debounce=0,floor=3,darkenv=1,dimming=0,aux=2,hyst=1,curve=4,pwm=0,last_block_ms=1731740000000,hooks=10/10,hook_mask=1111111111,ver=1.5.0"
+        // 1. Recovery of 7/7 hook state & version from GUARD_STATS alone when boot/summary rotated out
+        val statsOnlyRaw = "11-16 14:30:05.123 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=2,ambient=1,drift=14,floor=3,darkenv=1,aux=2,curve=4,pwm=0,last_block_ms=1731740000000,hooks=7/7,hook_mask=1111111,ver=1.5.0"
         val statsEntries = RootHelper.parseLogs(statsOnlyRaw)
         val recovered = RootHelper.parseModuleRuntimeStatus(statsEntries, "1.5.0")
         assertTrue(recovered.moduleDetected)
         assertEquals("1.5.0", recovered.loadedVersion)
-        assertEquals(10, recovered.installedCount)
+        assertEquals(7, recovered.installedCount)
         assertTrue(recovered.hooks.all { it.state == HookState.INSTALLED })
 
-        // Partial hook_mask (hook #8 skipped = 0)
-        val partialRaw = "11-16 14:35:00.000 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=0,ambient=0,drift=1,debounce=0,floor=0,darkenv=0,dimming=0,aux=0,hyst=0,curve=0,pwm=0,last_block_ms=0,hooks=9/10,hook_mask=1111111011,ver=1.5.0"
+        // Partial hook_mask (hook #6 skipped = 0, hook #7 installed = 1)
+        val partialRaw = "11-16 14:35:00.000 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=0,ambient=0,drift=1,floor=0,darkenv=0,aux=0,curve=0,pwm=0,last_block_ms=0,hooks=6/7,hook_mask=1111101,ver=1.5.0"
         val partialStatus = RootHelper.parseModuleRuntimeStatus(RootHelper.parseLogs(partialRaw), "1.5.0")
-        assertEquals(9, partialStatus.installedCount)
-        assertEquals(HookState.SKIPPED, partialStatus.hooks.first { it.id == 8 }.state)
-        assertEquals(HookState.INSTALLED, partialStatus.hooks.first { it.id == 10 }.state)
+        assertEquals(6, partialStatus.installedCount)
+        assertEquals(HookState.SKIPPED, partialStatus.hooks.first { it.id == 6 }.state)
+        assertEquals(HookState.INSTALLED, partialStatus.hooks.first { it.id == 7 }.state)
+
+        // Stale 10-bit hook_mask before reboot must NOT set unknown hooks blindly
+        val staleRaw = "11-16 14:36:00.000 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=0,ambient=0,drift=1,floor=0,darkenv=0,aux=0,curve=0,pwm=0,last_block_ms=0,hooks=10/10,hook_mask=1111111111,ver=1.5.0"
+        val staleStatus = RootHelper.parseModuleRuntimeStatus(RootHelper.parseLogs(staleRaw), "1.5.0")
+        assertEquals(0, staleStatus.installedCount)
 
         // 2. Chronological sorting across mixed Vector ISO and Android logcat/disk timestamps
         val mixedRaw = listOf(
-            "11-16 13:10:53.200 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=0,ambient=0,drift=5,debounce=0,floor=0,darkenv=0,dimming=0,aux=0,hyst=0,curve=0,pwm=0,last_block_ms=0",
+            "11-16 13:10:53.200 3743 4156 I AutoBrightnessGuard: GUARD_STATS:reset=0,ambient=0,drift=5,floor=0,darkenv=0,aux=0,curve=0,pwm=0,last_block_ms=0",
             "[ 2026-11-16T12:53:15.111 1000: 3743: 3743 D/VectorModuleManager ] Loaded module com.banoku.oplus.autobrightness successfully.",
             "11-16 13:05:10.050 3743 4156 I AutoBrightnessGuard: BLOCKED resetAutoBrightness #6"
         ).joinToString("\n")

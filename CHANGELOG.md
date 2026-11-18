@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.5.0 (versionCode 20) — Vector Framework, 7-Hook Verified Engine & Persistent Stats
+
+### Ключевые изменения и очистка движка (7/7 хуков)
+- **Удалены 3 недействующих перехватчика после суточного теста с пробами (`probe_h4=0, probe_h6=0, probe_h8=0`):**
+  - Исключены `StabilityProcess.getAccelerateScale()` (стабилизатор окон задержки), `OplusFeatureReduceBrightness.isReduceDisabled()` (App Smart Dimming) и `StabilityProcess.getLargeChangeLimit*()` (гистерезис) — в реальной работе `system_server` на ColorOS/OxygenOS 16–17 эти пути не вызывались.
+  - Оставшиеся **7 подтверждённых хуков** сквозным образом перенумерованы (`[1/7]..[7/7]`, маска `hook_mask=1111111`):
+    1. `[Хук #1]` `ResetGuard` (`resetAutoBrightness()` и `(int)` для DragOpt)
+    2. `[Хук #2]` `AmbientAdapterGuard` (`resetAmbientAdapter(String)`)
+    3. `[Хук #3]` `AntiDriftHook` (`handleStableForceChange` и `handleSmallChangeAnimating`)
+    4. `[Хук #4]` `DarkEnvSkipHook` [4a] + `NightNitFloorHook` [4b] (`shouldSkipProcessing` + `convertNitToBrightness` Авто 8.5 / Свой 1–150 нит)
+    5. `[Хук #5]` `DualSensorAuxHook` (`calculateAuxLux` с мёртвой зоной `>10 lx` / `>1.15x` + переключатели `MAIN`/`AUX`)
+    6. `[Хук #6]` `CustomCurveHook` (`getValueByCurve("", lux)` — живая 7-точечная кривая и чтение штатной `STOCK_CURVE`)
+    7. `[Хук #7]` `PwmSensorGuardHook` (`SensorEventQueue.dispatchSensorEvent` для отключения подэкранного `high_pwm_rgb`)
+- **Явная нумерация и подробный справочник в интерфейсе:**
+  - Переключатели в «Настройках» подписаны номерами хуков (`[Хук #1]`..`[Хук #5]`, `[Хуки #1–2]`), на карточках в «Обзоре» добавлены пометки `Хук #6` и `PWM • #7`.
+  - Во вкладке **«Справка»** добавлен раскрытый подробный блок с описанием всех 7 хуков и их целевых методов на RU / EN / UK.
+
+### Архитектура, IPC и телеметрия
+- **Vector Framework (LibXposed API 102) + Zero-Root RemotePreferences:**
+  - Приоритетная нативная синхронизация настроек и кривой через `XposedService` и `RemotePreferences` без вызова `su`, с проверкой области `android` (`Scope: OK`) и полным сохранением совместимости с LSPosed через `SystemProperties`.
+- **Надёжная статистика и постоянный кольцевой лог (`/data/system/autobrightness_guard.log`):**
+  - Компактная телеметрия `GUARD_STATS` (с `hook_mask` и счётчиками в покое / пороге / кривой / датчиках) пишется не чаще 1 раза в 60 секунд и сохраняется на диск — счётчики и статус `7/7` не пропадают при вытеснении буферов `logd`.
+  - Внедрена антидребезговая коалесценция счётчиков (`Burst Coalescing`) и мёртвая зона `10 lx` для `DualSensorAuxHook`.
+- **Дизайн и совместимость (UI/UX):**
+  - Объединённая карточка **«Статус модуля и статистика защиты»** на вкладке «Обзор», улучшенные **OLED** и **Светлая** темы Material 3, свёртываемые команды терминала в «Инструментах» и калибровка 12-битной шкалы `6..4095` + HBM для ColorOS 17.
+
 ## 1.4.4 (versionCode 18) — Toggleable Under-Display PWM Sensor, Screen Nit Readout & Collapsible Changelog
 
 ### Новые возможности и исправления

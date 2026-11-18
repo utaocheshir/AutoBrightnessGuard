@@ -59,7 +59,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
-import com.banoku.oplus.autobrightness.BrightnessMath
 import com.banoku.oplus.autobrightness.MainActivity
 import com.banoku.oplus.autobrightness.R
 import com.banoku.oplus.autobrightness.ui.theme.AppTheme
@@ -106,11 +105,6 @@ fun SettingsTabContent(
     var customMinNit by remember {
         mutableFloatStateOf(prefs.getFloat("pref_custom_min_nit", 12.0f).coerceIn(1f, 150f))
     }
-    var debounceLock by remember { mutableStateOf(prefs.getBoolean("pref_debounce_lock", true)) }
-    var hysteresisScale by remember {
-        mutableFloatStateOf(prefs.getFloat("pref_hysteresis_scale", BrightnessMath.DEFAULT_HYSTERESIS_SCALE))
-    }
-    var disableSmartDimming by remember { mutableStateOf(prefs.getBoolean("pref_disable_smart_dimming", true)) }
     var dualSensorGuard by remember { mutableStateOf(prefs.getBoolean("pref_dual_sensor_guard", true)) }
 
     var isIconHidden by remember {
@@ -402,87 +396,6 @@ fun SettingsTabContent(
                 }
             }
 
-            // Hysteresis Dead-Zone Slider
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.pref_hysteresis_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        OsCompatibilityBadge(stringResource(R.string.os_tag_16_17))
-                        Text(
-                            text = stringResource(R.string.pref_hysteresis_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
-                        )
-                        Text(
-                            text = stringResource(R.string.pref_hysteresis_value, hysteresisScale),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = colors.accentCyan
-                        )
-                        Slider(
-                            value = hysteresisScale,
-                            onValueChange = { rawVal ->
-                                hysteresisScale = (rawVal * 10f).roundToInt() / 10f
-                            },
-                            onValueChangeFinished = {
-                                scope.launch {
-                                    XposedBridgeClient.syncHysteresis(prefs, hysteresisScale)
-                                }
-                                Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
-                            },
-                            valueRange = BrightnessMath.MIN_HYSTERESIS_SCALE..BrightnessMath.MAX_HYSTERESIS_SCALE,
-                            modifier = Modifier.testTag("slider_hysteresis")
-                        )
-                    }
-                }
-            }
-
-            item {
-                SettingSwitchCard(
-                    title = stringResource(R.string.pref_debounce_lock_title),
-                    desc = stringResource(R.string.pref_debounce_lock_desc),
-                    osBadge = stringResource(R.string.os_tag_16_17),
-                    checked = debounceLock,
-                    testTag = "switch_debounce_lock",
-                    onCheckedChange = { newState ->
-                        debounceLock = newState
-                        scope.launch {
-                            XposedBridgeClient.syncBoolean(prefs, "pref_debounce_lock", AutoBrightnessModule.PROP_DEBOUNCE_LOCK, newState)
-                        }
-                        Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
-                    }
-                )
-            }
-
-            item {
-                SettingSwitchCard(
-                    title = stringResource(R.string.pref_smart_dimming_title),
-                    desc = stringResource(R.string.pref_smart_dimming_desc),
-                    osBadge = stringResource(R.string.os_tag_17_verified),
-                    checked = disableSmartDimming,
-                    testTag = "switch_smart_dimming",
-                    onCheckedChange = { newState ->
-                        disableSmartDimming = newState
-                        scope.launch {
-                            XposedBridgeClient.syncBoolean(prefs, "pref_disable_smart_dimming", AutoBrightnessModule.PROP_DISABLE_SMART_DIMMING, newState)
-                        }
-                        Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
-                    }
-                )
-            }
-
             item {
                 SettingSwitchCard(
                     title = stringResource(R.string.pref_dual_sensor_title),
@@ -497,6 +410,15 @@ fun SettingsTabContent(
                         }
                         Toast.makeText(context, toastApplied, Toast.LENGTH_SHORT).show()
                     }
+                )
+            }
+
+            item {
+                Text(
+                    text = stringResource(R.string.settings_overview_hooks_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                 )
             }
 

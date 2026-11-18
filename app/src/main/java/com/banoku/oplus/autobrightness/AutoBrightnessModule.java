@@ -20,7 +20,6 @@ import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -29,19 +28,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Dual-Channel Config & Telemetry:
  * - Primary IPC: LibXposed RemotePreferences ("autobrightness_config") on Vector / modern LSPosed.
  * - Fallback IPC: Android SystemProperties (persist.autobrightness.*) for legacy/Magisk LSPosed.
- * - Live Telemetry: Throttled GUARD_STATS snapshots preserve counters past tail buffers.
+ * - Live Telemetry: Coalesced GUARD_STATS snapshots preserve counters past tail buffers.
  *
- * Verified 10/10 hooks against ColorOS 12-17 / OxygenOS oplus-services.jar:
+ * Verified 7/7 hooks against ColorOS 12-17 / OxygenOS oplus-services.jar:
  * 1. Curve Reset Guard: OplusAutomaticBrightnessController.resetAutoBrightness() & (int)
  * 2. Ambient Adapter Guard: OplusBrightnessAmbientAdapter.resetAmbientAdapter(String)
  * 3. Anti-Drift Stability Guard: handleStableForceChange() & handleSmallChangeAnimating()
- * 4. Debounce Window Lock: StabilityProcess.getAccelerateScale(...) <= 1.0f
- * 5. Night Reading / Custom Unconditional Floor + Dark-Env 20-min Dimming Guard
- * 6. Per-App Smart Dimming Bypass: OplusFeatureReduceBrightness.isReduceDisabled()
- * 7. Dual 360° Aux Sensor Balancer: LuxEvent$LuxEventResult.calculateAuxLux(mainLux, auxLux)
- * 8. Hysteresis Dead-Zone Widener: StabilityProcess.getLargeChangeLimit*(float)
- * 9. Live Custom Curve Override: OplusDisplayBrightnessModel.getValueByCurve(String, float)
- * 10. Under-Display PWM Sensor Guard: SystemSensorManager$SensorEventQueue (high_pwm_rgb)
+ * 4. Night Reading / Custom Unconditional Floor + Dark-Env 20-min Dimming Guard (4a + 4b)
+ * 5. Dual 360° Aux Sensor Balancer: LuxEvent$LuxEventResult.calculateAuxLux(mainLux, auxLux)
+ * 6. Live Custom Curve Override: OplusDisplayBrightnessModel.getValueByCurve(String, float)
+ * 7. Under-Display PWM Sensor Guard: SystemSensorManager$SensorEventQueue (high_pwm_rgb)
  */
 public class AutoBrightnessModule extends XposedModule {
 
@@ -59,9 +55,6 @@ public class AutoBrightnessModule extends XposedModule {
     public static final String PROP_STABILITY_GUARD = "persist.autobrightness.stability_guard";
     public static final String PROP_MIN_FLOOR = "persist.autobrightness.min_floor";
     public static final String PROP_CUSTOM_MIN_NIT = "persist.autobrightness.custom_min_nit";
-    public static final String PROP_DEBOUNCE_LOCK = "persist.autobrightness.debounce_lock";
-    public static final String PROP_HYSTERESIS = "persist.autobrightness.hysteresis";
-    public static final String PROP_DISABLE_SMART_DIMMING = "persist.autobrightness.disable_smart_dimming";
     public static final String PROP_DUAL_SENSOR_GUARD = "persist.autobrightness.dual_sensor_guard";
     public static final String PROP_DISABLE_MAIN_SENSOR = "persist.autobrightness.disable_main_sensor";
     public static final String PROP_DISABLE_AUX_SENSOR = "persist.autobrightness.disable_aux_sensor";
@@ -77,12 +70,6 @@ public class AutoBrightnessModule extends XposedModule {
             "com.android.server.display.feature.ambience.OplusBrightnessAmbientAdapter";
     private static final String LUX_RESULT_CLASS =
             "com.android.server.display.feature.ambience.utils.OplusLuxResult";
-    private static final String STABILITY_PROCESS_CLASS =
-            "com.android.server.display.feature.ambience.processes.process.StabilityProcess";
-    private static final String SCENE_BASE_CLASS =
-            "com.android.server.display.feature.ambience.scenes.utils.SceneBase";
-    private static final String OPLUS_PAIR_CLASS =
-            "com.android.server.display.feature.ambience.utils.OplusPair";
     private static final String LUX_EVENT_RESULT_CLASS =
             "com.android.server.display.feature.ambience.events.event.LuxEvent$LuxEventResult";
     private static final String BRIGHTNESS_MODEL_CLASS =
@@ -94,8 +81,6 @@ public class AutoBrightnessModule extends XposedModule {
             "com.android.server.display.feature.postprocess.OplusBrightnessPostProcessingManager";
     private static final String DARK_ENV_FEATURE_CLASS =
             "com.android.server.display.feature.postprocess.OplusFeatureDarkEnvReduceBrightness";
-    private static final String REDUCE_BRIGHTNESS_FEATURE_CLASS =
-            "com.android.server.display.feature.postprocess.OplusFeatureReduceBrightness";
 
     private static final String RESET_METHOD = "resetAutoBrightness";
     private static final String RESET_AMBIENT_METHOD = "resetAmbientAdapter";
@@ -123,27 +108,15 @@ public class AutoBrightnessModule extends XposedModule {
     private final AtomicInteger stabilizedDrift = new AtomicInteger();
     private final AtomicInteger clampedBrightness = new AtomicInteger();
     private final AtomicInteger skippedDarkEnv = new AtomicInteger();
-    private final AtomicInteger lockedDebounce = new AtomicInteger();
-    private final AtomicInteger bypassedAppDimming = new AtomicInteger();
     private final AtomicInteger smoothedAuxSensor = new AtomicInteger();
-    private final AtomicInteger widenedHysteresis = new AtomicInteger();
     private final AtomicInteger appliedCustomCurve = new AtomicInteger();
     private final AtomicInteger blockedPwmSensor = new AtomicInteger();
 
-    // Diagnostic invocation probes for silent hooks (#4, #6, #8)
-    private final AtomicInteger probeDebounceCalls = new AtomicInteger();
-    private final AtomicInteger probeDimmingCalls = new AtomicInteger();
-    private final AtomicInteger probeHystCalls = new AtomicInteger();
-    private final AtomicBoolean mLoggedHystError = new AtomicBoolean(false);
-
     // Burst-coalescing timestamps so high-frequency display/animation ticks count episodes cleanly
     private volatile long mLastAntiDriftCountMs = 0L;
-    private volatile long mLastDebounceCountMs = 0L;
     private volatile long mLastDarkEnvCountMs = 0L;
     private volatile long mLastFloorCountMs = 0L;
-    private volatile long mLastDimmingCountMs = 0L;
     private volatile long mLastAuxCountMs = 0L;
-    private volatile long mLastHystCountMs = 0L;
     private volatile long mLastCurveCountMs = 0L;
     private volatile long mLastPwmCountMs = 0L;
 
@@ -166,11 +139,10 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile long mLastStatsLogMs = 0L;
     private volatile long mLastHeartbeatReemitMs = 0L;
     private volatile long mLastLoggedTotalEvents = -1L;
-    private volatile long mLastLoggedProbeEvents = -1L;
     private volatile long mLastBlockedEpochMs = 0L;
     private volatile String mBootSummaryLine = "";
     private volatile int mInstalledHookCount = 0;
-    private volatile String mInstalledHookMask = "0000000000";
+    private volatile String mInstalledHookMask = "0000000";
 
     // Cached reflection handles (avoid repeated Class.forName in hot brightness paths)
     private static volatile Method sSpGetBoolean;
@@ -199,9 +171,6 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile Method mBuilderSetNit;
     private volatile Method mBuilderGetSdrNit;
     private volatile Method mBuilderSetSdrNit;
-    private volatile Field mPairFirstField;
-    private volatile Field mPairSecondField;
-    private volatile Method mOplusPairCreate;
 
     private static final class SettingsSnapshot {
         final long capturedAtMs;
@@ -212,9 +181,6 @@ public class AutoBrightnessModule extends XposedModule {
         final boolean stabilityGuard;
         final boolean autoFloor;
         final float customMinNit;
-        final boolean debounceLock;
-        final float hysteresisScale;
-        final boolean disableSmartDimming;
         final boolean dualSensorGuard;
         final boolean disableMainSensor;
         final boolean disableAuxSensor;
@@ -230,9 +196,6 @@ public class AutoBrightnessModule extends XposedModule {
                 boolean stabilityGuard,
                 boolean autoFloor,
                 float customMinNit,
-                boolean debounceLock,
-                float hysteresisScale,
-                boolean disableSmartDimming,
                 boolean dualSensorGuard,
                 boolean disableMainSensor,
                 boolean disableAuxSensor,
@@ -247,9 +210,6 @@ public class AutoBrightnessModule extends XposedModule {
             this.stabilityGuard = stabilityGuard;
             this.autoFloor = autoFloor;
             this.customMinNit = customMinNit;
-            this.debounceLock = debounceLock;
-            this.hysteresisScale = hysteresisScale;
-            this.disableSmartDimming = disableSmartDimming;
             this.dualSensorGuard = dualSensorGuard;
             this.disableMainSensor = disableMainSensor;
             this.disableAuxSensor = disableAuxSensor;
@@ -294,32 +254,23 @@ public class AutoBrightnessModule extends XposedModule {
         // 3. Anti-Drift Stability Guard (handleStableForceChange & handleSmallChangeAnimating)
         boolean h3 = hookStabilityAntiDrift(cl);
 
-        // 4. Debounce Window Lock (StabilityProcess.getAccelerateScale)
-        boolean h4 = hookDebounceAccelerateScale(cl);
+        // 4. Night Reading / Manual Unconditional Nit Floor & 20-min Dark-Env Dimming Guard
+        boolean h4a = hookDarkEnvGuard(cl);
+        boolean h4b = hookNitFloor(cl);
 
-        // 5. Night Reading / Manual Unconditional Nit Floor & 20-min Dark-Env Dimming Guard
-        boolean h5a = hookDarkEnvGuard(cl);
-        boolean h5b = hookNitFloor(cl);
+        // 5. Dual 360° Aux Sensor Balancer (LuxEvent$LuxEventResult.calculateAuxLux)
+        boolean h5 = hookDualSensorAux(cl);
 
-        // 6. Per-App Smart Dimming Bypass (OplusFeatureReduceBrightness.isReduceDisabled)
-        boolean h6 = hookSmartDimmingBypass(cl);
+        // 6. Live Custom Curve Override (OplusDisplayBrightnessModel.getValueByCurve)
+        boolean h6 = hookCustomBrightnessCurve(cl);
 
-        // 7. Dual 360° Aux Sensor Balancer (LuxEvent$LuxEventResult.calculateAuxLux)
-        boolean h7 = hookDualSensorAux(cl);
+        // 7. Under-Display PWM Sensor Guard (tcs3720 / high_pwm_rgb in SensorEventQueue)
+        boolean h7 = hookPwmSensorGuard(cl);
 
-        // 8. Hysteresis Dead-Zone Widener (StabilityProcess.getLargeChangeLimit(float))
-        boolean h8 = hookHysteresisLimits(cl);
-
-        // 9. Live Custom Curve Override (OplusDisplayBrightnessModel.getValueByCurve)
-        boolean h9 = hookCustomBrightnessCurve(cl);
-
-        // 10. Under-Display PWM Sensor Guard (tcs3720 / high_pwm_rgb in SensorEventQueue)
-        boolean h10 = hookPwmSensorGuard(cl);
-
-        boolean[] statusArr = new boolean[] { h1, h2, h3, h4, (h5a && h5b), h6, h7, h8, h9, h10 };
+        boolean[] statusArr = new boolean[] { h1, h2, h3, (h4a && h4b), h5, h6, h7 };
         int okCount = 0;
         StringBuilder summary = new StringBuilder();
-        StringBuilder mask = new StringBuilder(10);
+        StringBuilder mask = new StringBuilder(7);
         for (int i = 0; i < statusArr.length; i++) {
             if (statusArr[i]) okCount++;
             mask.append(statusArr[i] ? '1' : '0');
@@ -328,7 +279,7 @@ public class AutoBrightnessModule extends XposedModule {
         }
         mInstalledHookCount = okCount;
         mInstalledHookMask = mask.toString();
-        String summaryLine = "HOOK_SUMMARY:installed=" + okCount + "/10,version=" + VERSION
+        String summaryLine = "HOOK_SUMMARY:installed=" + okCount + "/7,version=" + VERSION
                 + ",sdk=" + Build.VERSION.SDK_INT + ",hooks=" + summary;
         mBootSummaryLine = summaryLine;
         mLastHeartbeatReemitMs = SystemClock.elapsedRealtime();
@@ -378,16 +329,6 @@ public class AutoBrightnessModule extends XposedModule {
         }
 
         try {
-            Class<?> pairCls = Class.forName(OPLUS_PAIR_CLASS, false, cl);
-            mPairFirstField = pairCls.getField("first");
-            mPairSecondField = pairCls.getField("second");
-            mOplusPairCreate = pairCls.getDeclaredMethod("create", String.class, Object.class, Object.class);
-            mOplusPairCreate.setAccessible(true);
-        } catch (Throwable t) {
-            note(Log.INFO, "OplusPair cache skipped: " + t.getMessage());
-        }
-
-        try {
             Class<?> builderCls = Class.forName(STATE_BUILDER_CLASS, false, cl);
             mBuilderIsAutoMode = builderCls.getMethod("isAutoBrightnessMode");
             mBuilderGetAmbientLuxValid = builderCls.getMethod("getAmbientLuxValid");
@@ -428,11 +369,11 @@ public class AutoBrightnessModule extends XposedModule {
                 note(Log.INFO, "resetAutoBrightness(int) skipped: " + t.getMessage());
             }
 
-            note(Log.INFO, "Hook [1/10] controller resetAutoBrightness installed (variants=" + hooked
+            note(Log.INFO, "Hook [1/7] controller resetAutoBrightness installed (variants=" + hooked
                     + ", lambda=" + (alarmLambda != null) + ")");
             return hooked > 0;
         } catch (Throwable t) {
-            note(Log.WARN, "Hook [1/10] controller skipped: " + t.getMessage());
+            note(Log.WARN, "Hook [1/7] controller skipped: " + t.getMessage());
             return false;
         }
     }
@@ -443,10 +384,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method resetAmbient = ambientAdapter.getDeclaredMethod(RESET_AMBIENT_METHOD, String.class);
             deoptimize(resetAmbient);
             hook(resetAmbient).intercept(new AmbientAdapterGuard());
-            note(Log.INFO, "Hook [2/10] ambient resetAmbientAdapter(String) installed");
+            note(Log.INFO, "Hook [2/7] ambient resetAmbientAdapter(String) installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [2/10] ambient reset skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [2/7] ambient reset skipped: " + t.getMessage());
             return false;
         }
     }
@@ -475,45 +416,10 @@ public class AutoBrightnessModule extends XposedModule {
                 note(Log.INFO, "handleSmallChangeAnimating skipped: " + t.getMessage());
             }
 
-            note(Log.INFO, "Hook [3/10] stability anti-drift installed (targets=" + installed + ")");
+            note(Log.INFO, "Hook [3/7] stability anti-drift installed (targets=" + installed + ")");
             return installed > 0;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [3/10] stability anti-drift skipped: " + t.getMessage());
-            return false;
-        }
-    }
-
-    private boolean hookDebounceAccelerateScale(ClassLoader cl) {
-        try {
-            Class<?> stabilityCls = Class.forName(STABILITY_PROCESS_CLASS, false, cl);
-            int installed = 0;
-
-            try {
-                Method m0 = stabilityCls.getDeclaredMethod("getAccelerateScale");
-                deoptimize(m0);
-                hook(m0).intercept(new DebounceScaleHook());
-                installed++;
-            } catch (Throwable ignored) { }
-
-            try {
-                Method m1 = stabilityCls.getDeclaredMethod("getAccelerateScale", float.class);
-                deoptimize(m1);
-                hook(m1).intercept(new DebounceScaleHook());
-                installed++;
-            } catch (Throwable ignored) { }
-
-            try {
-                Class<?> sceneBaseCls = Class.forName(SCENE_BASE_CLASS, false, cl);
-                Method m2 = stabilityCls.getDeclaredMethod("getAccelerateScale", float.class, sceneBaseCls);
-                deoptimize(m2);
-                hook(m2).intercept(new DebounceScaleHook());
-                installed++;
-            } catch (Throwable ignored) { }
-
-            note(Log.INFO, "Hook [4/10] StabilityProcess.getAccelerateScale installed (overloads=" + installed + ")");
-            return installed > 0;
-        } catch (Throwable t) {
-            note(Log.INFO, "Hook [4/10] StabilityProcess skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [3/7] stability anti-drift skipped: " + t.getMessage());
             return false;
         }
     }
@@ -525,10 +431,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method shouldSkip = darkEnvCls.getDeclaredMethod("shouldSkipProcessing", builderCls);
             deoptimize(shouldSkip);
             hook(shouldSkip).intercept(new DarkEnvSkipHook());
-            note(Log.INFO, "Hook [5a/10] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed");
+            note(Log.INFO, "Hook [4a/7] OplusFeatureDarkEnvReduceBrightness.shouldSkipProcessing installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [5a/10] DarkEnv guard skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [4a/7] DarkEnv guard skipped: " + t.getMessage());
             return false;
         }
     }
@@ -540,24 +446,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method convertNit = ppmCls.getDeclaredMethod("convertNitToBrightness", builderCls);
             deoptimize(convertNit);
             hook(convertNit).intercept(new NightNitFloorHook());
-            note(Log.INFO, "Hook [5b/10] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (" + NIGHT_MIN_FLOOR_NITS + " nits) installed");
+            note(Log.INFO, "Hook [4b/7] OplusBrightnessPostProcessingManager.convertNitToBrightness floor (" + NIGHT_MIN_FLOOR_NITS + " nits) installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [5b/10] Nit floor skipped: " + t.getMessage());
-            return false;
-        }
-    }
-
-    private boolean hookSmartDimmingBypass(ClassLoader cl) {
-        try {
-            Class<?> reduceCls = Class.forName(REDUCE_BRIGHTNESS_FEATURE_CLASS, false, cl);
-            Method isDisabled = reduceCls.getDeclaredMethod("isReduceDisabled");
-            deoptimize(isDisabled);
-            hook(isDisabled).intercept(new SmartDimmingBypassHook());
-            note(Log.INFO, "Hook [6/10] OplusFeatureReduceBrightness.isReduceDisabled installed");
-            return true;
-        } catch (Throwable t) {
-            note(Log.INFO, "Hook [6/10] Smart dimming bypass skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [4b/7] Nit floor skipped: " + t.getMessage());
             return false;
         }
     }
@@ -568,39 +460,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method calcAux = luxEventResultCls.getDeclaredMethod("calculateAuxLux", float.class, float.class);
             deoptimize(calcAux);
             hook(calcAux).intercept(new DualSensorAuxHook());
-            note(Log.INFO, "Hook [7/10] LuxEvent$LuxEventResult.calculateAuxLux balancer installed");
+            note(Log.INFO, "Hook [5/7] LuxEvent$LuxEventResult.calculateAuxLux balancer installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [7/10] Dual sensor balancer skipped: " + t.getMessage());
-            return false;
-        }
-    }
-
-    private boolean hookHysteresisLimits(ClassLoader cl) {
-        try {
-            Class<?> stabilityCls = Class.forName(STABILITY_PROCESS_CLASS, false, cl);
-            int installed = 0;
-
-            try {
-                Method mainLimit = stabilityCls.getDeclaredMethod("getLargeChangeLimit", float.class);
-                deoptimize(mainLimit);
-                hook(mainLimit).intercept(new HysteresisLimitHook("large"));
-                installed++;
-            } catch (Throwable t) {
-                note(Log.INFO, "getLargeChangeLimit(float) skipped: " + t.getMessage());
-            }
-
-            try {
-                Method auxLimit = stabilityCls.getDeclaredMethod("getLargeChangeLimitForSpecialLight", float.class);
-                deoptimize(auxLimit);
-                hook(auxLimit).intercept(new HysteresisLimitHook("large"));
-                installed++;
-            } catch (Throwable ignored) { }
-
-            note(Log.INFO, "Hook [8/10] StabilityProcess hysteresis widener installed (targets=" + installed + ")");
-            return installed > 0;
-        } catch (Throwable t) {
-            note(Log.INFO, "Hook [8/10] Hysteresis widener skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [5/7] Dual sensor balancer skipped: " + t.getMessage());
             return false;
         }
     }
@@ -611,10 +474,10 @@ public class AutoBrightnessModule extends XposedModule {
             Method getVal = modelCls.getDeclaredMethod("getValueByCurve", String.class, float.class);
             deoptimize(getVal);
             hook(getVal).intercept(new CustomCurveHook());
-            note(Log.INFO, "Hook [9/10] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed");
+            note(Log.INFO, "Hook [6/7] OplusDisplayBrightnessModel.getValueByCurve(String, float) live curve installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [9/10] Live custom curve skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [6/7] Live custom curve skipped: " + t.getMessage());
             return false;
         }
     }
@@ -628,10 +491,10 @@ public class AutoBrightnessModule extends XposedModule {
             eventsField.setAccessible(true);
             mQueueSensorsEventsField = eventsField;
             hook(dispatch).intercept(new PwmSensorGuardHook());
-            note(Log.INFO, "Hook [10/10] SystemSensorManager$SensorEventQueue high_pwm_rgb guard installed");
+            note(Log.INFO, "Hook [7/7] SystemSensorManager$SensorEventQueue high_pwm_rgb guard installed");
             return true;
         } catch (Throwable t) {
-            note(Log.INFO, "Hook [10/10] PWM sensor guard skipped: " + t.getMessage());
+            note(Log.INFO, "Hook [7/7] PWM sensor guard skipped: " + t.getMessage());
             return false;
         }
     }
@@ -754,44 +617,7 @@ public class AutoBrightnessModule extends XposedModule {
     }
 
     /**
-     * 4. Debounce Window Lock: caps StabilityProcess.getAccelerateScale() to <= 1.0f so
-     * LuxQueueProcess maintains full SceneConfig debounce duration against brief hand jitter.
-     */
-    private final class DebounceScaleHook implements XposedInterface.Hooker {
-        @Override
-        public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            int hits = probeDebounceCalls.incrementAndGet();
-            Object result = chain.proceed();
-            SettingsSnapshot cfg = getSettings();
-            if (hits == 1) {
-                note(Log.INFO, "PROBE [4/10] getAccelerateScale first hit (enabled="
-                        + cfg.debounceLock + ", origResult=" + result + ")");
-                maybeLogCompactStats(true);
-            }
-            if (!cfg.debounceLock) {
-                return result;
-            }
-            if (result instanceof Float) {
-                float scale = (Float) result;
-                if (scale > 1.0f) {
-                    long now = SystemClock.elapsedRealtime();
-                    if (mLastDebounceCountMs == 0L || (now - mLastDebounceCountMs) >= BURST_COALESCE_SLOW_MS) {
-                        mLastDebounceCountMs = now;
-                        int n = lockedDebounce.incrementAndGet();
-                        if (n == 1 || (n % 50 == 1 && cfg.verboseLog)) {
-                            note(Log.INFO, "GUARD debounce accelerateScale clamped " + scale + " -> 1.0 (#" + n + ")");
-                        }
-                        maybeLogCompactStats(false);
-                    }
-                    return 1.0f;
-                }
-            }
-            return result;
-        }
-    }
-
-    /**
-     * 5a. Dark-Env 20-minute progressive dimming guard.
+     * 4a. Dark-Env 20-minute progressive dimming guard.
      * Skipped when either automatic 8.5 nit night floor OR custom manual nit floor is active.
      */
     private final class DarkEnvSkipHook implements XposedInterface.Hooker {
@@ -826,7 +652,7 @@ public class AutoBrightnessModule extends XposedModule {
     }
 
     /**
-     * 5b. Night Reading Floor OR Unconditional Manual Floor:
+     * 4b. Night Reading Floor OR Unconditional Manual Floor:
      * - When autoFloor is true: enforces >= 8.5 nits in auto mode (luxValid && !isDragging).
      * - When autoFloor is false and customMinNit > 0:
      *   UNCONDITIONALLY prevents backlight nits from dropping below customMinNit while screen is lit (nit > 0).
@@ -891,35 +717,7 @@ public class AutoBrightnessModule extends XposedModule {
     }
 
     /**
-     * 6. Per-App Smart Dimming Bypass: forces OplusFeatureReduceBrightness.isReduceDisabled() = true.
-     */
-    private final class SmartDimmingBypassHook implements XposedInterface.Hooker {
-        @Override
-        public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            int hits = probeDimmingCalls.incrementAndGet();
-            SettingsSnapshot cfg = getSettings();
-            if (hits == 1) {
-                note(Log.INFO, "PROBE [6/10] isReduceDisabled first hit (enabled=" + cfg.disableSmartDimming + ")");
-                maybeLogCompactStats(true);
-            }
-            if (!cfg.disableSmartDimming) {
-                return chain.proceed();
-            }
-            long now = SystemClock.elapsedRealtime();
-            if (mLastDimmingCountMs == 0L || (now - mLastDimmingCountMs) >= BURST_COALESCE_SLOW_MS) {
-                mLastDimmingCountMs = now;
-                int n = bypassedAppDimming.incrementAndGet();
-                if (n == 1 || (n % 25 == 1 && cfg.verboseLog)) {
-                    note(Log.INFO, "GUARD bypassed OplusFeatureReduceBrightness per-app dimming (#" + n + ")");
-                }
-                maybeLogCompactStats(false);
-            }
-            return Boolean.TRUE;
-        }
-    }
-
-    /**
-     * 7. Dual 360° Aux Sensor Balancer + Individual Sensor Disable Toggles:
+     * 5. Dual 360° Aux Sensor Balancer + Individual Sensor Disable Toggles:
      * - If disable_aux_sensor is enabled: returns mainLux (ignores rear sensor).
      * - If disable_main_sensor is enabled: returns auxLux (uses rear sensor directly).
      * - Otherwise smooths significant indoor spikes (> 10 lx deadband, > 1.15x) with blend + EMA (0.35 alpha).
@@ -974,101 +772,7 @@ public class AutoBrightnessModule extends XposedModule {
     }
 
     /**
-     * 8. Hysteresis Dead-Zone Widener: expands [left, right] bounds returned by
-     * StabilityProcess.getLargeChangeLimit(float targetLux) so minor ambient fluctuations do not
-     * trigger REASON.LargeChange and re-animate screen brightness continuously.
-     */
-    private final class HysteresisLimitHook implements XposedInterface.Hooker {
-        private final String pairTag;
-
-        HysteresisLimitHook(String pairTag) {
-            this.pairTag = pairTag;
-        }
-
-        @Override
-        public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            int hits = probeHystCalls.incrementAndGet();
-            Object pair = chain.proceed();
-            SettingsSnapshot cfg = getSettings();
-            float scale = cfg.hysteresisScale;
-
-            if (hits == 1) {
-                String arg0Str = "?";
-                try {
-                    arg0Str = String.valueOf(chain.getArg(0));
-                } catch (Throwable ignored) { }
-                String pairInfo = "null";
-                if (pair != null) {
-                    try {
-                        Object fObj = mPairFirstField != null ? mPairFirstField.get(pair) : "<noField>";
-                        Object sObj = mPairSecondField != null ? mPairSecondField.get(pair) : "<noField>";
-                        String fType = fObj != null ? fObj.getClass().getSimpleName() : "null";
-                        String sType = sObj != null ? sObj.getClass().getSimpleName() : "null";
-                        pairInfo = pair.getClass().getSimpleName()
-                                + "(" + fObj + ":" + fType + ", " + sObj + ":" + sType + ")";
-                    } catch (Throwable t) {
-                        pairInfo = pair.getClass().getSimpleName() + "(inspectErr=" + t.getClass().getSimpleName() + ")";
-                    }
-                }
-                note(Log.INFO, "PROBE [8/10] getLargeChangeLimit first hit: targetLux=" + arg0Str
-                        + ", scale=" + scale
-                        + ", pair=" + pairInfo
-                        + ", createMethod=" + (mOplusPairCreate != null));
-                maybeLogCompactStats(true);
-            }
-
-            if (scale <= 1.01f || pair == null || mPairFirstField == null || mPairSecondField == null || mOplusPairCreate == null) {
-                return pair;
-            }
-
-            try {
-                Object arg0 = chain.getArg(0);
-                if (!(arg0 instanceof Float)) {
-                    if (mLoggedHystError.compareAndSet(false, true)) {
-                        note(Log.WARN, "PROBE [8/10] unexpected targetLux arg type: "
-                                + (arg0 != null ? arg0.getClass().getName() : "null"));
-                    }
-                    return pair;
-                }
-                float targetLux = (Float) arg0;
-                Object firstObj = mPairFirstField.get(pair);
-                Object secondObj = mPairSecondField.get(pair);
-                if (firstObj instanceof Float && secondObj instanceof Float) {
-                    float left = (Float) firstObj;
-                    float right = (Float) secondObj;
-                    float[] widened = BrightnessMath.widenRangeBounds(targetLux, left, right, scale);
-                    if (widened[0] != left || widened[1] != right) {
-                        Object widenedPair = mOplusPairCreate.invoke(null, pairTag, widened[0], widened[1]);
-                        long now = SystemClock.elapsedRealtime();
-                        if (mLastHystCountMs == 0L || (now - mLastHystCountMs) >= BURST_COALESCE_SLOW_MS) {
-                            mLastHystCountMs = now;
-                            int n = widenedHysteresis.incrementAndGet();
-                            if (n == 1 || (n % 50 == 1 && cfg.verboseLog)) {
-                                note(Log.INFO, "GUARD hysteresis (" + scale + "x) at " + targetLux
-                                        + " lx: [" + left + ".." + right + "] -> [" + widened[0] + ".." + widened[1] + "]");
-                            }
-                            maybeLogCompactStats(false);
-                        }
-                        return widenedPair;
-                    }
-                } else if (mLoggedHystError.compareAndSet(false, true)) {
-                    note(Log.WARN, "PROBE [8/10] unexpected OplusPair field types: first="
-                            + (firstObj != null ? firstObj.getClass().getName() : "null")
-                            + ", second=" + (secondObj != null ? secondObj.getClass().getName() : "null"));
-                }
-            } catch (Throwable t) {
-                if (mLoggedHystError.compareAndSet(false, true)) {
-                    note(Log.WARN, "PROBE [8/10] OplusPair error: "
-                            + t.getClass().getSimpleName() + ": " + t.getMessage());
-                }
-            }
-
-            return pair;
-        }
-    }
-
-    /**
-     * 9. Live Custom Curve Override: evaluates user's 7-point lux->nit curve from
+     * 6. Live Custom Curve Override: evaluates user's 7-point lux->nit curve from
      * RemotePreferences / persist.autobrightness.curve inside OplusDisplayBrightnessModel.getValueByCurve("", lux).
      * Uses cached CurveConfig so zero heap allocations occur unless the user modifies a slider.
      */
@@ -1150,7 +854,7 @@ public class AutoBrightnessModule extends XposedModule {
     }
 
     /**
-     * 10. Under-Display PWM Sensor Guard: suppresses SensorEventQueue.dispatchSensorEvent
+     * 7. Under-Display PWM Sensor Guard: suppresses SensorEventQueue.dispatchSensorEvent
      * inside system_server for the under-display high_pwm_rgb (tcs3720) sensor when disabled,
      * with near-zero overhead on other sensors.
      */
@@ -1227,13 +931,11 @@ public class AutoBrightnessModule extends XposedModule {
 
     private void maybeLogCompactStats(boolean force) {
         long total = (long) blockedReset.get() + blockedAmbient.get() + stabilizedDrift.get()
-                + lockedDebounce.get() + clampedBrightness.get() + skippedDarkEnv.get()
-                + bypassedAppDimming.get() + smoothedAuxSensor.get() + widenedHysteresis.get()
+                + clampedBrightness.get() + skippedDarkEnv.get() + smoothedAuxSensor.get()
                 + appliedCustomCurve.get() + blockedPwmSensor.get();
-        long probeTotal = (long) probeDebounceCalls.get() + probeDimmingCalls.get() + probeHystCalls.get();
         long now = SystemClock.elapsedRealtime();
         boolean heartbeatDue = (now - mLastHeartbeatReemitMs) >= 300_000L;
-        if (total == mLastLoggedTotalEvents && probeTotal == mLastLoggedProbeEvents && !heartbeatDue) {
+        if (total == mLastLoggedTotalEvents && !heartbeatDue) {
             return;
         }
         if (!force && mLastStatsLogMs != 0L && (now - mLastStatsLogMs) < STATS_LOG_INTERVAL_MS) {
@@ -1241,7 +943,6 @@ public class AutoBrightnessModule extends XposedModule {
         }
         mLastStatsLogMs = now;
         mLastLoggedTotalEvents = total;
-        mLastLoggedProbeEvents = probeTotal;
         if (heartbeatDue) {
             mLastHeartbeatReemitMs = now;
             String bootSummary = mBootSummaryLine;
@@ -1256,21 +957,15 @@ public class AutoBrightnessModule extends XposedModule {
         note(Log.INFO, "GUARD_STATS:reset=" + blockedReset.get()
                 + ",ambient=" + blockedAmbient.get()
                 + ",drift=" + stabilizedDrift.get()
-                + ",debounce=" + lockedDebounce.get()
                 + ",floor=" + clampedBrightness.get()
                 + ",darkenv=" + skippedDarkEnv.get()
-                + ",dimming=" + bypassedAppDimming.get()
                 + ",aux=" + smoothedAuxSensor.get()
-                + ",hyst=" + widenedHysteresis.get()
                 + ",curve=" + appliedCustomCurve.get()
                 + ",pwm=" + blockedPwmSensor.get()
                 + ",last_block_ms=" + mLastBlockedEpochMs
-                + ",hooks=" + mInstalledHookCount + "/10"
+                + ",hooks=" + mInstalledHookCount + "/7"
                 + ",hook_mask=" + mInstalledHookMask
-                + ",ver=" + VERSION
-                + ",probe_h4=" + probeDebounceCalls.get()
-                + ",probe_h6=" + probeDimmingCalls.get()
-                + ",probe_h8=" + probeHystCalls.get());
+                + ",ver=" + VERSION);
     }
 
     private SettingsSnapshot getSettings() {
@@ -1289,9 +984,6 @@ public class AutoBrightnessModule extends XposedModule {
                 readBoolWithChannel("pref_stability_guard", PROP_STABILITY_GUARD, true, preferRemote),
                 readBoolWithChannel("pref_min_floor", PROP_MIN_FLOOR, true, preferRemote),
                 readFloatWithChannel("pref_custom_min_nit", PROP_CUSTOM_MIN_NIT, 0f, 0f, BrightnessMath.MAX_CUSTOM_FLOOR_NIT, preferRemote),
-                readBoolWithChannel("pref_debounce_lock", PROP_DEBOUNCE_LOCK, true, preferRemote),
-                readFloatWithChannel("pref_hysteresis_scale", PROP_HYSTERESIS, BrightnessMath.DEFAULT_HYSTERESIS_SCALE, BrightnessMath.MIN_HYSTERESIS_SCALE, BrightnessMath.MAX_HYSTERESIS_SCALE, preferRemote),
-                readBoolWithChannel("pref_disable_smart_dimming", PROP_DISABLE_SMART_DIMMING, true, preferRemote),
                 readBoolWithChannel("pref_dual_sensor_guard", PROP_DUAL_SENSOR_GUARD, true, preferRemote),
                 readBoolWithChannel("pref_disable_main_sensor", PROP_DISABLE_MAIN_SENSOR, false, preferRemote),
                 readBoolWithChannel("pref_disable_aux_sensor", PROP_DISABLE_AUX_SENSOR, false, preferRemote),
