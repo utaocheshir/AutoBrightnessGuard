@@ -215,54 +215,112 @@ object RootHelper {
         outcome.result
     }
 
-    suspend fun launchLsposedManager(context: Context) = withContext(Dispatchers.IO) {
-        val knownManagers = listOf(
-            "org.matrix.vector.manager" to "org.matrix.vector.manager.ui.MainActivity",
-            "org.lsposed.manager" to "org.lsposed.manager.ui.MainActivity",
-            "io.github.lsposed.manager" to "io.github.lsposed.manager.ui.MainActivity",
-            "org.lsposed.lspatch" to "org.lsposed.lspatch.ui.activity.MainActivity"
-        )
+    suspend fun launchLsposedManager(context: Context): Boolean = withContext(Dispatchers.IO) {
+        val frameworkHint = XposedBridgeClient.state.value.frameworkName.lowercase()
+        val preferLsp = frameworkHint.contains("lsposed") || frameworkHint.contains("lspd")
 
-        for ((pkg, _) in knownManagers) {
+        val standaloneManagers = if (preferLsp) {
+            listOf(
+                "org.lsposed.manager" to "org.lsposed.manager.ui.MainActivity",
+                "io.github.lsposed.manager" to "io.github.lsposed.manager.ui.MainActivity",
+                "org.matrix.vector.manager" to "org.matrix.vector.manager.ui.MainActivity",
+                "org.lsposed.lspatch" to "org.lsposed.lspatch.ui.activity.MainActivity"
+            )
+        } else {
+            listOf(
+                "org.matrix.vector.manager" to "org.matrix.vector.manager.ui.MainActivity",
+                "org.lsposed.manager" to "org.lsposed.manager.ui.MainActivity",
+                "io.github.lsposed.manager" to "io.github.lsposed.manager.ui.MainActivity",
+                "org.lsposed.lspatch" to "org.lsposed.lspatch.ui.activity.MainActivity"
+            )
+        }
+
+        // 1. Standalone manager launcher intent or explicit activity
+        for ((pkg, _) in standaloneManagers) {
             val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
             if (launchIntent != null) {
                 try {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     context.startActivity(launchIntent)
-                    return@withContext
+                    return@withContext true
                 } catch (_: Throwable) {
                 }
             }
         }
-
-        for ((pkg, activityCls) in knownManagers) {
+        for ((pkg, activityCls) in standaloneManagers) {
             try {
                 val explicitIntent = Intent().apply {
                     component = ComponentName(pkg, activityCls)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(explicitIntent)
-                return@withContext
+                return@withContext true
             } catch (_: Throwable) {
             }
         }
 
-        // Standard secret code broadcast for parasitic LSPosed / Vector manager
-        try {
-            val secretIntent = Intent("android.telephony.action.SECRET_CODE").apply {
-                data = Uri.parse("android_secret_code://5776733")
-                addFlags(0x00400000) // FLAG_RECEIVER_INCLUDE_BACKGROUND
+        // 2. Parasitic Vector / LSPosed hosted inside com.android.shell/.BugreportWarningActivity
+        val parasiticCategories = when {
+            frameworkHint.contains("vector") -> listOf("org.matrix.vector.manager.LAUNCH_MANAGER")
+            preferLsp -> listOf("org.lsposed.manager.LAUNCH_MANAGER")
+            else -> emptyList()
+        }
+        for (cat in parasiticCategories) {
+            try {
+                val parasiticIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(cat)
+                    component = ComponentName("com.android.shell", "com.android.shell.BugreportWarningActivity")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(parasiticIntent)
+                return@withContext true
+            } catch (_: Throwable) {
             }
-            context.sendBroadcast(secretIntent)
-        } catch (_: Throwable) {
         }
 
-        // Root shell fallback for standalone or parasitic managers (Vector / LSPosed / ReLSPosed)
-        executeSuCommand(
-            "am start -n org.matrix.vector.manager/.ui.MainActivity 2>/dev/null " +
-                "|| am start -n org.lsposed.manager/.ui.MainActivity 2>/dev/null " +
-                "|| am broadcast -a android.telephony.action.SECRET_CODE -d android_secret_code://5776733 2>/dev/null"
-        )
+        // 3. Root shell fallback: standalone -> framework-verified parasitic LAUNCH_MANAGER -> SECRET_CODE
+        val cmd = buildString {
+            append("for p in org.matrix.vector.manager org.lsposed.manager io.github.lsposed.manager; do ")
+            append("if pm path \"\$p\" >/dev/null 2>&1; then ")
+            append("monkey -p \"\$p\" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 && exit 0; ")
+            append("am start -n \"\$p/.ui.MainActivity\" >/dev/null 2>&1 && exit 0; ")
+            append("fi; done; ")
+
+            if (frameworkHint.contains("vector")) {
+                append("am start -a android.intent.action.MAIN -c org.matrix.vector.manager.LAUNCH_MANAGER -n com.android.shell/.BugreportWarningActivity && exit 0; ")
+            } else if (preferLsp) {
+                append("am start -a android.intent.action.MAIN -c org.lsposed.manager.LAUNCH_MANAGER -n com.android.shell/.BugreportWarningActivity && exit 0; ")
+            }
+
+            append("if grep -qiE 'vector|matrix' /data/adb/modules/*/module.prop 2>/dev/null || ls /data/adb/modules/*vector* >/dev/null 2>&1 || [ -d /data/adb/vector ]; then ")
+            append("am start -a android.intent.action.MAIN -c org.matrix.vector.manager.LAUNCH_MANAGER -n com.android.shell/.BugreportWarningActivity && exit 0; ")
+            append("fi; ")
+
+            append("if [ -d /data/adb/lspd ] || grep -qi 'lsposed' /data/adb/modules/*/module.prop 2>/dev/null || ls /data/adb/modules/*lsposed* >/dev/null 2>&1; then ")
+            append("am start -a android.intent.action.MAIN -c org.lsposed.manager.LAUNCH_MANAGER -n com.android.shell/.BugreportWarningActivity && exit 0; ")
+            append("fi; ")
+
+            append("am broadcast -a android.telephony.action.SECRET_CODE -d android_secret_code://832867 >/dev/null 2>&1; ")
+            append("am broadcast -a android.telephony.action.SECRET_CODE -d android_secret_code://5776733 >/dev/null 2>&1")
+        }
+        val res = executeSuCommand(cmd)
+        if (res.success && !res.output.contains("Error:", ignoreCase = true)) {
+            return@withContext true
+        }
+
+        // 4. Last-resort non-root broadcast attempt
+        for (code in listOf("832867", "5776733")) {
+            try {
+                val secretIntent = Intent("android.telephony.action.SECRET_CODE").apply {
+                    data = Uri.parse("android_secret_code://$code")
+                    addFlags(0x00400000) // FLAG_RECEIVER_INCLUDE_BACKGROUND
+                }
+                context.sendBroadcast(secretIntent)
+                return@withContext true
+            } catch (_: Throwable) {
+            }
+        }
+        false
     }
 
     suspend fun setSystemProperty(key: String, enabled: Boolean): Boolean {

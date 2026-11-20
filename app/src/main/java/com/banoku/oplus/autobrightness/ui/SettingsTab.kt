@@ -58,8 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.banoku.oplus.autobrightness.AppEntryReceiver
 import com.banoku.oplus.autobrightness.AutoBrightnessModule
-import com.banoku.oplus.autobrightness.MainActivity
 import com.banoku.oplus.autobrightness.R
 import com.banoku.oplus.autobrightness.ui.theme.AppTheme
 import com.banoku.oplus.autobrightness.util.LocaleHelper
@@ -108,13 +108,16 @@ fun SettingsTabContent(
     var dualSensorGuard by remember { mutableStateOf(prefs.getBoolean("pref_dual_sensor_guard", true)) }
 
     var isIconHidden by remember {
-        val comp = ComponentName(context, MainActivity::class.java)
+        val comp = AppEntryReceiver.launcherAliasComponent(context)
         val state = try {
             context.packageManager.getComponentEnabledSetting(comp)
         } catch (_: Throwable) {
             PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
         }
-        mutableStateOf(state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED)
+        mutableStateOf(
+            state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+                state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+        )
     }
 
     val toastApplied = stringResource(R.string.toast_applied_live)
@@ -488,15 +491,16 @@ fun SettingsTabContent(
                             checked = isIconHidden,
                             onCheckedChange = { newState ->
                                 isIconHidden = newState
-                                val componentName = ComponentName(context, MainActivity::class.java)
+                                val launcherComp = AppEntryReceiver.launcherAliasComponent(context)
                                 val flag = if (newState) {
                                     PackageManager.COMPONENT_ENABLED_STATE_DISABLED
                                 } else {
                                     PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                                 }
                                 try {
+                                    AppEntryReceiver.ensureMainActivityEnabled(context)
                                     context.packageManager.setComponentEnabledSetting(
-                                        componentName,
+                                        launcherComp,
                                         flag,
                                         PackageManager.DONT_KILL_APP
                                     )

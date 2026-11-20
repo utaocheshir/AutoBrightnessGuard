@@ -215,47 +215,49 @@ fun FaqTabContent(modifier: Modifier = Modifier) {
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 ChangelogBlock(
-                                    versionTitle = "v1.5.0 (Vector Framework, 7-Hook Engine & Stats)",
+                                    versionTitle = stringResource(R.string.changelog_v151_title),
                                     color = colors.accentGreen,
-                                    body = "• Vector Framework (LibXposed API 102) & RemotePreferences: Zero-Root live sync + scope check, preserving full SystemProperties fallback for legacy LSPosed forks.\n" +
-                                        "• Clean 7/7 Verified Hook Engine: removed 3 uncalled ColorOS 17 hooks (getAccelerateScale, isReduceDisabled, getLargeChangeLimit) after 24h runtime telemetry, numbered toggles (#1–#7) across Settings/Overview, and added a full 7-hook reference block in FAQ.\n" +
-                                        "• Calmed Telemetry & Reliable Stats: persistent disk ring log (/data/system/autobrightness_guard.log), throttled GUARD_STATS snapshots (hook_mask=1111111), burst-coalesced counters, and 10 lx Aux deadband smoothing.\n" +
-                                        "• ColorOS 17 Calibration & Polished UI: parsed 6..4095 BrightnessModel scale + HBM peak, unified Status + Protection card, grouped Settings, Tools compatibility & collapsible commands, OLED & Light themes."
+                                    body = stringResource(R.string.changelog_v151_body)
                                 )
 
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 ChangelogBlock(
-                                    versionTitle = "v1.4.5 (Universal Root, ColorOS 17 HBM & Auto-Installer)",
+                                    versionTitle = stringResource(R.string.changelog_v150_title),
                                     color = colors.accentCyan,
-                                    body = "• Universal su detection (Magisk, KernelSU, KSUN, BakaSU, APatch) + Vector/LSPosed log path support.\n" +
-                                        "• ColorOS 17 BrightnessModel calibration (6..4095, mNormalMaxNit, HBM up to 2000 nits) & in-app APK updater with progress bar.\n" +
-                                        "• 3-mode Night Floor selector (Off / Auto 8.5 / Custom 1–150 nits)."
+                                    body = stringResource(R.string.changelog_v150_body)
                                 )
 
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 ChangelogBlock(
-                                    versionTitle = "v1.4.4 (PWM Sensor Switch & Live Nits)",
+                                    versionTitle = stringResource(R.string.changelog_v145_title),
                                     color = colors.accentCyan,
-                                    body = "• Disableable under-display PWM sensor (high_pwm_rgb).\n" +
-                                        "• Hardware spline nit calibration synced across Sensors & Curve Editor."
+                                    body = stringResource(R.string.changelog_v145_body)
                                 )
 
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 ChangelogBlock(
-                                    versionTitle = "v1.4.0 – 1.4.3 (Multi-Hook Engine & Curve Profiles)",
+                                    versionTitle = stringResource(R.string.changelog_v144_title),
                                     color = colors.accentCyan,
-                                    body = "• DragOpt resetAutoBrightness(int), Anti-Drift, 8.5 nit Night Floor, DarkEnv Skip, 360° Aux Smoother, 7-point Live Curve with JSON profiles."
+                                    body = stringResource(R.string.changelog_v144_body)
                                 )
 
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 ChangelogBlock(
-                                    versionTitle = "v1.1 – 1.3b (Foundation & SystemProperties IPC)",
+                                    versionTitle = stringResource(R.string.changelog_v140_title),
+                                    color = colors.accentCyan,
+                                    body = stringResource(R.string.changelog_v140_body)
+                                )
+
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                ChangelogBlock(
+                                    versionTitle = stringResource(R.string.changelog_v110_title),
                                     color = colors.accentAmber,
-                                    body = "• Dual-rule Reset Guard, ambient adapter hook, live SystemProperties sync, multi-language UI, GitHub update checker."
+                                    body = stringResource(R.string.changelog_v110_body)
                                 )
                             }
                         }

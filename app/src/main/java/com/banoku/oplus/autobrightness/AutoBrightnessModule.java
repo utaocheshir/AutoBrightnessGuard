@@ -21,9 +21,10 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 /**
- * Auto Brightness Guard 1.5.0 (Vector Framework + LSPosed Universal Edition).
+ * Auto Brightness Guard 1.5.1 (Vector Framework + LSPosed Universal Edition).
  *
  * Dual-Channel Config & Telemetry:
  * - Primary IPC: LibXposed RemotePreferences ("autobrightness_config") on Vector / modern LSPosed.
@@ -42,7 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AutoBrightnessModule extends XposedModule {
 
     public static final String TAG = "AutoBrightnessGuard";
-    public static final String VERSION = "1.5.0";
+    public static final String VERSION = "1.5.1";
     public static final String REMOTE_PREFS_GROUP = "autobrightness_config";
 
     // Legacy toggles (SystemProperties)
@@ -156,10 +157,14 @@ public class AutoBrightnessModule extends XposedModule {
     private volatile long mLastStockSampleMs = 0L;
     private volatile String mLastStockCurve = "";
 
-    // Fast handle cache for SystemSensorManager$SensorEventQueue (under-display high_pwm_rgb guard)
+    // Fast thread-safe handle cache for SystemSensorManager$SensorEventQueue (covers handles > 256 like 0x06a5=1701)
+    // Cache states: 0 = unseen, 1 = non-PWM pass-through, 2 = target high_pwm_rgb sensor
+    private static final int SENSOR_HANDLE_CACHE_SIZE = 4096;
+    private static final int HANDLE_STATE_UNKNOWN = 0;
+    private static final int HANDLE_STATE_IGNORE = 1;
+    private static final int HANDLE_STATE_PWM = 2;
     private volatile Field mQueueSensorsEventsField;
-    private final boolean[] mSeenSensorHandle = new boolean[256];
-    private final boolean[] mIsPwmSensorHandle = new boolean[256];
+    private final AtomicIntegerArray mSensorHandleStates = new AtomicIntegerArray(SENSOR_HANDLE_CACHE_SIZE);
     private volatile long mLastPwmPropCheckMs = 0L;
     private volatile boolean mCachedPwmDisabled = false;
 
@@ -874,13 +879,11 @@ public class AutoBrightnessModule extends XposedModule {
                     SensorEvent se = events.get(handle);
                     if (se != null && se.sensor != null) {
                         Sensor s = se.sensor;
-                        String name = s.getName() != null ? s.getName().toLowerCase(Locale.US) : "";
-                        String st = s.getStringType() != null ? s.getStringType().toLowerCase(Locale.US) : "";
-                        boolean isPwm = (st.contains("high_pwm") || name.contains("high_pwm") || name.contains("tcs3720"))
-                                && !st.contains("cct") && !name.contains("cct");
-                        if (handle >= 0 && handle < mSeenSensorHandle.length) {
-                            mIsPwmSensorHandle[handle] = isPwm;
-                            mSeenSensorHandle[handle] = true;
+                        boolean isPwm = BrightnessMath.isTargetPwmSensor(
+                                s.getType(), s.getName(), s.getStringType());
+                        if (handle >= 0 && handle < SENSOR_HANDLE_CACHE_SIZE) {
+                            mSensorHandleStates.set(
+                                    handle, isPwm ? HANDLE_STATE_PWM : HANDLE_STATE_IGNORE);
                         }
                         return isPwm;
                     }
@@ -894,10 +897,12 @@ public class AutoBrightnessModule extends XposedModule {
             try {
                 int handle = (Integer) chain.getArg(0);
                 boolean isPwm;
-                if (handle >= 0 && handle < mSeenSensorHandle.length && mSeenSensorHandle[handle]) {
-                    if (!mIsPwmSensorHandle[handle]) {
-                        return chain.proceed();
-                    }
+                int cachedState = (handle >= 0 && handle < SENSOR_HANDLE_CACHE_SIZE)
+                        ? mSensorHandleStates.get(handle)
+                        : HANDLE_STATE_UNKNOWN;
+                if (cachedState == HANDLE_STATE_IGNORE) {
+                    return chain.proceed();
+                } else if (cachedState == HANDLE_STATE_PWM) {
                     isPwm = true;
                 } else {
                     isPwm = detectPwmSensor(chain.getThisObject(), handle);

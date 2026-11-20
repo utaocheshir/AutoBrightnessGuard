@@ -81,8 +81,32 @@ public final class BrightnessMath {
                 && auxLux > (mainLux * 1.15f);
     }
 
+    public static final int SENSOR_TYPE_PROXIMITY = 8;
+
     public static boolean shouldRaiseNitFloor(float nit, float floorNits) {
         return !Float.isNaN(nit) && nit > 0f && floorNits > 0f && nit < (floorNits - 0.05f);
+    }
+
+    /**
+     * Strictly matches the under-display High-PWM ambient channel (qti.sensor.high_pwm_rgb)
+     * while NEVER blocking tcs3720 Proximity (TYPE_PROXIMITY), Wise_RGB, CCT, or pocket/ToF sensors.
+     */
+    public static boolean isTargetPwmSensor(int sensorType, String rawName, String rawStringType) {
+        if (sensorType == SENSOR_TYPE_PROXIMITY) {
+            return false;
+        }
+        String name = rawName != null ? rawName.toLowerCase(Locale.US) : "";
+        String st = rawStringType != null ? rawStringType.toLowerCase(Locale.US) : "";
+
+        if (st.contains("proximity") || name.contains("proximity")
+                || st.contains("prox") || name.contains("prox")
+                || st.contains("cct") || name.contains("cct")
+                || st.contains("wise_rgb") || name.contains("wise_rgb") || name.contains("wise rgb")
+                || st.contains("pocket") || name.contains("pocket")
+                || st.contains("flight") || name.contains("flight")) {
+            return false;
+        }
+        return st.contains("high_pwm") || name.contains("high_pwm") || name.contains("high pwm");
     }
 
     public static float parseFloatBounded(String raw, float defaultVal, float minVal, float maxVal) {

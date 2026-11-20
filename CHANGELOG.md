@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.1 (versionCode 21) — Фикс датчика приближения в Хуке #7, запуск скрытого Vector/LSPosed и секретный код `*#*#224#*#*`
+
+### Исправления и новые возможности
+- **Исправлен Хук #7 (`PwmSensorGuardHook` — датчик приближения при звонке):**
+  - На устройствах с комбинированным оптическим модулем **AMS `tcs3720`** (например, OnePlus 13 `CPH2653`) под этим префиксом чипа висят 4 логических датчика: `tcs3720 Proximity Sensor Wakeup` (`android.sensor.proximity`, ID `0x52`), `tcs3720 Oplus Wise_RGB` (`0x501`), `tcs3720 Oplus High_pwm Light` (`qti.sensor.high_pwm_rgb`, ID `0x6a5`) и `High_pwm CCT` (`0x6cd`).
+  - Убрана широкая проверка `name.contains("tcs3720")` и добавлено жёсткое исключение `Sensor.TYPE_PROXIMITY` (`prox`, `wise_rgb`, `cct`, `pocket`, `flight`) через `BrightnessMath.isTargetPwmSensor()`. Теперь отключение `PWM • #7` убирает всплески яркости на белом контенте в темноте и **больше не ломает отключение экрана у уха во время звонка**.
+  - Быстрый потокобезопасный кэш дескрипторов сенсоров (`AtomicIntegerArray`) расширен с `256` до **`4096`** элементов, чтобы реальные ID вроде `0x06a5` (`1701`) кэшировались с нулевыми накладными расходами.
+- **Запуск скрытого / паразитического Vector и LSPosed Manager:**
+  - В `RootHelper.launchLsposedManager()` добавлена поддержка паразитического режима через `com.android.shell/.BugreportWarningActivity` с категориями `org.matrix.vector.manager.LAUNCH_MANAGER` (Vector) и `org.lsposed.manager.LAUNCH_MANAGER` (LSPosed), автоопределением фреймворка в `/data/adb` и резервными вызовами секретных кодов `832867` / `5776733` + добавлен блок `<queries>` в `AndroidManifest.xml`.
+- **Безопасное скрытие ярлыка приложения + код `*#*#224#*#*`:**
+  - Ярлык рабочего стола вынесен в отдельный `<activity-alias>` (`.MainActivityLauncher`), а `.MainActivity` остаётся всегда активной и отмечена категорией `de.robv.android.xposed.category.MODULE_SETTINGS` — приложение всегда можно открыть из Vector / LSPosed Manager.
+  - Добавлен `AppEntryReceiver` с поддержкой вызова из номеронабирателя **`*#*#224#*#*`** (*ABG*) и автоматической миграцией `MY_PACKAGE_REPLACED` для тех, кто скрыл иконку ещё на `v1.5.0`.
+- **Локализация истории версий (Changelog):**
+  - Все карточки `ChangelogBlock` во вкладке **«Справка»** перенесены в строковые ресурсы и теперь отображаются на выбранном языке (**Русский**, **Українська**, **English**).
+
 ## 1.5.0 (versionCode 20) — Vector Framework, 7-Hook Verified Engine & Persistent Stats
 
 ### Ключевые изменения и очистка движка (7/7 хуков)

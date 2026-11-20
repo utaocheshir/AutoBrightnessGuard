@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        AppEntryReceiver.migrateLegacyHiddenMainActivity(this)
         XposedBridgeClient.init(getSharedPreferences("settings", Context.MODE_PRIVATE))
         setContent {
             AutoBrightnessGuardTheme {

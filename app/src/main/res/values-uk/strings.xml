@@ -127,8 +127,8 @@
     <string name="pref_verbose_log_title">Розширене логування</string>
     <string name="pref_verbose_log_desc">Записувати періодичні спрацьовування фільтрів стабільності та яскравості у журнал Vector / LSPosed / logcat.</string>
     <string name="hide_icon_title">Приховати іконку в лаунчері</string>
-    <string name="hide_icon_desc">Приховує ярлик додатка з меню. Відкрити налаштування можна в будь-який момент через менеджер Vector / LSPosed.</string>
-    <string name="toast_icon_hidden">Іконку приховано. Відкрити можна через менеджер Vector / LSPosed</string>
+    <string name="hide_icon_desc">Приховує ярлик із робочого столу. Відкрити додаток можна через Vector / LSPosed або код у дзвонилці *#*#224#*#*.</string>
+    <string name="toast_icon_hidden">Іконку приховано. Відкрити: Vector / LSPosed або *#*#224#*#*</string>
     <string name="toast_icon_shown">Іконка знову доступна в лаунчері</string>
     <string name="toast_error_fmt">Помилка: %1$s</string>
     <string name="pref_language_title">Мова додатка</string>
@@ -187,8 +187,9 @@
     <string name="soft_reboot_dialog_desc">Екран згасне на ~5 секунд, відкриті додатки закриються. Ядро та дані користувача не постраждають.</string>
     <string name="tools_soft_reboot_failed">Не вдалося виконати Soft Reboot: %1$s</string>
     <string name="tools_manager_title">Vector / LSPosed Manager</string>
-    <string name="tools_manager_desc">Відкрити налаштування модулів і перевірити область дії (Системний фреймворк)</string>
+    <string name="tools_manager_desc">Відкрити менеджер (включно з прихованим режимом через BugreportWarningActivity) для перевірки області system</string>
     <string name="tools_manager_open_btn">Відкрити</string>
+    <string name="tools_manager_launch_failed">Не вдалося відкрити менеджер. Наберіть *#*#832867#*#* (Vector) або *#*#5776733#*#* (LSPosed), або надайте Root</string>
     <string name="device_compatibility">Сумісність пристрою</string>
     <string name="compat_status_ok">Сумісно • %1$s</string>
     <string name="compat_status_old_sdk">Потрібен Android 12+ (поточний SDK: %1$d)</string>
@@ -218,8 +219,8 @@
 
     <!-- Вкладка Довідка -->
     <string name="faq_title">Довідка та історія версій</string>
-    <string name="faq_q0">Що нового у версії 1.5.0?</string>
-    <string name="faq_a0">1. Оптимізований движок із 7 підтверджених хуків: за підсумками добового тесту повністю прибрано 3 невикликані на ColorOS 17 перехоплювачі (getAccelerateScale, isReduceDisabled, getLargeChangeLimit). Перемикачі в Налаштуваннях пронумеровані [Хук #1–#5], а #6 та #7 підписані в Огляді.\n2. Пріоритет Vector Framework і LibXposed API 102: нативний зв\'язок через XposedService та RemotePreferences миттєво змінює налаштування без Root IPC (із резервом SystemProperties для форків LSPosed).\n3. Постійний кільцевий журнал і точна статистика: запис GUARD_STATS у /data/system/autobrightness_guard.log, тротлінг телеметрії (burst coalescing), поріг 10 lx для Aux-балансувальника та оновлений OLED/Light UI.</string>
+    <string name="faq_q0">Що нового у версії 1.5.1?</string>
+    <string name="faq_a0">1. Виправлення датчика наближення в Хуку #7: звужено фільтр підекранного high_pwm_rgb із повним виключенням TYPE_PROXIMITY (tcs3720 Proximity Sensor Wakeup) та Wise_RGB. Тепер вимкнення PWM • #7 прибирає підскоки яскравості на світлому контенті в темряві й НЕ ламає вимкнення екрана біля вуха під час дзвінка, а кеш хендлів розширено до 4096 (включно з 0x06a5).\n2. Запуск прихованого Vector / LSPosed: кнопка в «Інструментах» тепер відкриває паразитичний менеджер через com.android.shell/.BugreportWarningActivity (LAUNCH_MANAGER) та коди *#*#832867#*#* / *#*#5776733#*#*.\n3. Безпечне приховування іконки та переклад Changelog: приховується лише ярлик лаунчера, залишаючи доступ із Vector/LSPosed та за кодом *#*#224#*#*, а «Історія версій» повністю перекладена на UK / RU / EN.</string>
     <string name="faq_q1">У чому полягає баг автояскравості OxygenOS / ColorOS?</string>
     <string name="faq_a1">У прошивках OnePlus / OPPO (OxygenOS / ColorOS 12–17) контролер OplusAutomaticBrightnessController запускає таймер AlarmManager (зазвичай на 10 хвилин) під час вимкнення екрана. Після завершення часу викликається resetAutoBrightness() (або resetAutoBrightness(1) за активного DragOpt у ColorOS 17) і OplusBrightnessAmbientAdapter.resetAmbientAdapter("AutoReset"), що стирає навчену криву користувача.</string>
     <string name="faq_q2">Як поєднуються Vector Framework і KSUN + SUSFS?</string>
@@ -250,10 +251,22 @@
     <string name="hook_guide_6_desc">Зчитує реальну штатну криву прошивки (STOCK_CURVE), а за увімкнення Власної кривої підмінює її в реальному часі за вашими 7 опорними точками (0–10 000 lx → ніт) без перезавантаження. Понад 10 000 lx бере максимум зі штатної HBM-кривої, якщо він вищий. Керування: Огляд → Графік кривої.</string>
     <string name="hook_guide_7_title">Вимикач підекранного PWM-датчика</string>
     <string name="hook_guide_7_method">android.hardware.SystemSensorManager$SensorEventQueue.dispatchSensorEvent</string>
-    <string name="hook_guide_7_desc">Кешує дескриптор підекранного датчика high_pwm_rgb (tcs3720) у system_server без алокацій пам\'яті та повністю відсікає потік його подій при перемиканні в положення ВИМК. Керування: Огляд → Яскравість і датчики світла [PWM • #7].</string>
+    <string name="hook_guide_7_desc">Кешує суворо дескриптори high_pwm_rgb (до 4096, не зачіпаючи tcs3720 Proximity та Wise_RGB) у system_server без алокацій пам\'яті та відсікає потік його подій при положенні ВИМК, прибираючи сплески яскравості від світлого контенту в темряві без шкоди для наближення. Керування: Огляд → Яскравість і датчики світла [PWM • #7].</string>
     <string name="changelog_title">Історія версій (Changelog)</string>
     <string name="changelog_hide">Приховати список змін</string>
-    <string name="changelog_show">Натисніть, щоб розгорнути (1.1 – 1.5.0)</string>
+    <string name="changelog_show">Натисніть, щоб розгорнути (1.1 – 1.5.1)</string>
+    <string name="changelog_v151_title">v1.5.1 (Фікс наближення у Хуку #7, прихований Vector/LSPosed і код дзвонилки)</string>
+    <string name="changelog_v151_body">• Фікс датчика наближення в Хуку #7: виключено TYPE_PROXIMITY (tcs3720 Proximity) та Wise_RGB, кеш хендлів розширено до 4096 (під 0x06a5) — вимкнення PWM більше не ламає гасіння екрана під час дзвінка.\n• Відкриття прихованого Vector / LSPosed: запуск через BugreportWarningActivity (LAUNCH_MANAGER) і коди *#*#832867#*#* / *#*#5776733#*#*.\n• Безпечне приховування ярлика: вимикається лише launcher-alias, додаток завжди відкривається з Vector/LSPosed (MODULE_SETTINGS) та за кодом *#*#224#*#* (з авто-міграцією з v1.5.0).\n• Локалізація Changelog: історія версій повністю перекладена українською, російською та англійською.</string>
+    <string name="changelog_v150_title">v1.5.0 (Vector Framework, 7 підтверджених хуків і статистика)</string>
+    <string name="changelog_v150_body">• Vector Framework (LibXposed API 102) і RemotePreferences: жива синхронізація БЕЗ Root + перевірка області, з резервом через SystemProperties для LSPosed.\n• Чистий движок 7/7 хуків: прибрано 3 невикликаних хуки ColorOS 17 після добового тесту, пронумеровано налаштування [#1–#7], додано довідник хуків.\n• Постійний дисковий лог (/data/system/autobrightness_guard.log), GUARD_STATS (hook_mask=1111111), коалесценція лічильників, калібрування ColorOS 17 (6..4095 + HBM).</string>
+    <string name="changelog_v145_title">v1.4.5 (Універсальний Root, HBM ColorOS 17 та автовстановник)</string>
+    <string name="changelog_v145_body">• Універсальний пошук su (Magisk, KernelSU, KSUN, BakaSU, APatch) та підтримка шляхів логів Vector/LSPosed.\n• Калібрування BrightnessModel ColorOS 17 (6..4095, mNormalMaxNit, HBM до 2000 ніт) та вбудований інсталятор оновлень APK з прогрес-баром.\n• 3 режими нічного порогу (Вимк / Авто 8.5 / Власний 1–150 ніт).</string>
+    <string name="changelog_v144_title">v1.4.4 (Вимикач PWM-датчика та точні ніти)</string>
+    <string name="changelog_v144_body">• Вимикається підекранний датчик PWM (high_pwm_rgb).\n• Апаратна калібрування ніт за системним сплайном для картки датчиків і графіка кривої.</string>
+    <string name="changelog_v140_title">v1.4.0 – 1.4.3 (Мульти-хук движок і профілі кривої)</string>
+    <string name="changelog_v140_body">• DragOpt resetAutoBrightness(int), Анти-дрейф, нічний поріг 8.5 ніт, DarkEnv Skip, 360° Aux-балансувальник, 7-точкова крива з JSON-профілями.</string>
+    <string name="changelog_v110_title">v1.1 – 1.3b (База модуля та SystemProperties IPC)</string>
+    <string name="changelog_v110_body">• Подвійний захист від скидання, хук Ambient Adapter, синхронізація через SystemProperties, багатомовний UI та перевірка оновлень на GitHub.</string>
     <string name="about_title">Про автора і проєкт</string>
     <string name="about_body_fmt">Автор модуля: Banoku\nВерсія: %1$s\nAPI: LibXposed 102 (Vector та LSPosed)</string>
     <string name="open_github_desc">Відкрити репозиторій на GitHub</string>

@@ -639,10 +639,14 @@ fun ToolsTabContent(
 
                         Spacer(modifier = Modifier.width(12.dp))
 
+                        val managerFailMsg = stringResource(R.string.tools_manager_launch_failed)
                         ElevatedButton(
                             onClick = {
                                 scope.launch {
-                                    RootHelper.launchLsposedManager(context)
+                                    val launched = RootHelper.launchLsposedManager(context)
+                                    if (!launched) {
+                                        Toast.makeText(context, managerFailMsg, Toast.LENGTH_LONG).show()
+                                    }
                                 }
                             },
                             modifier = Modifier.testTag("open_lsposed_button")

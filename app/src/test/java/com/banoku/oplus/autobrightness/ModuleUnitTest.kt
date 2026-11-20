@@ -17,7 +17,8 @@ class ModuleUnitTest {
 
     @Test
     fun versionAndTagCheck() {
-        assertEquals("1.5.0", AutoBrightnessModule.VERSION)
+        assertEquals("1.5.1", AutoBrightnessModule.VERSION)
+        assertEquals("224", AppEntryReceiver.SECRET_CODE_NUMBER)
         assertEquals("autobrightness_config", AutoBrightnessModule.REMOTE_PREFS_GROUP)
         assertEquals("AutoBrightnessGuard", AutoBrightnessModule.TAG)
         assertEquals("persist.autobrightness.block_reset", AutoBrightnessModule.PROP_BLOCK_RESET)
@@ -134,14 +135,66 @@ class ModuleUnitTest {
     }
 
     @Test
+    fun pwmSensorDetectionExcludesProximityAndWiseRgbCheck() {
+        // Real OnePlus 13 (CPH2653) dumpsys sensorservice matrix:
+        // 1. tcs3720 Proximity Sensor Wakeup (0x00000052) MUST NEVER be blocked
+        assertFalse(
+            BrightnessMath.isTargetPwmSensor(
+                BrightnessMath.SENSOR_TYPE_PROXIMITY,
+                "tcs3720 Proximity Sensor Wakeup",
+                "android.sensor.proximity"
+            )
+        )
+        // Even if ROM wrapped proximity in vendor type != 8, "prox" token keeps it safe
+        assertFalse(
+            BrightnessMath.isTargetPwmSensor(
+                33171066,
+                "gesture_prox gesture prox Sensor Wakeup",
+                "qti.sensor.gesture_prox"
+            )
+        )
+        assertFalse(
+            BrightnessMath.isTargetPwmSensor(
+                33171067,
+                "phone_prox phone prox Sensor Wakeup",
+                "qti.sensor.phone_prox"
+            )
+        )
+        // 2. tcs3720 Wise_RGB (0x00000501) and High_pwm CCT (0x000006cd) MUST stay untouched
+        assertFalse(
+            BrightnessMath.isTargetPwmSensor(
+                33171028,
+                "tcs3720 Oplus Wise_RGB Sensor Non-wakeup",
+                "qti.sensor.wise_rgb"
+            )
+        )
+        assertFalse(
+            BrightnessMath.isTargetPwmSensor(
+                33171074,
+                "tcs3720 Oplus High_pwm CCT Sensor Non-wakeup",
+                "qti.sensor.high_pwm_cct"
+            )
+        )
+        // 3. ONLY tcs3720 Oplus High_pwm Light Sensor (0x000006a5) matches
+        assertTrue(
+            BrightnessMath.isTargetPwmSensor(
+                33171070,
+                "tcs3720 Oplus High_pwm Light Sensor Non-wakeup",
+                "qti.sensor.high_pwm_rgb"
+            )
+        )
+    }
+
+    @Test
     fun updateCheckerVersionComparison() {
         assertFalse(UpdateChecker.isVersionNewer("V1.3b", "1.3b"))
-        assertFalse(UpdateChecker.isVersionNewer("v1.5.0", "1.5.0"))
+        assertFalse(UpdateChecker.isVersionNewer("v1.5.1", "1.5.1"))
+        assertTrue(UpdateChecker.isVersionNewer("1.5.1", "1.5.0"))
         assertTrue(UpdateChecker.isVersionNewer("1.5.0", "1.4.5"))
         assertTrue(UpdateChecker.isVersionNewer("1.4.5", "1.4.4"))
         assertTrue(UpdateChecker.isVersionNewer("1.4.4", "1.4.3"))
         assertTrue(UpdateChecker.isVersionNewer("1.4", "1.3b"))
-        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.5.0"))
+        assertTrue(UpdateChecker.isVersionNewer("2.0", "1.5.1"))
     }
 
     @Test

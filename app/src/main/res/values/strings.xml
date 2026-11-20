@@ -127,8 +127,8 @@
     <string name="pref_verbose_log_title">Verbose Debug Logging</string>
     <string name="pref_verbose_log_desc">Log periodic post-processing &amp; stability guard hits in Vector / LSPosed / logcat.</string>
     <string name="hide_icon_title">Hide Launcher Icon</string>
-    <string name="hide_icon_desc">Hide this app from the app drawer. Always accessible via Vector / LSPosed Manager.</string>
-    <string name="toast_icon_hidden">Icon hidden. Open via Vector / LSPosed Manager</string>
+    <string name="hide_icon_desc">Hides the desktop icon while keeping the app active. Open anytime via Vector / LSPosed Manager or dialer code *#*#224#*#*.</string>
+    <string name="toast_icon_hidden">Icon hidden. Open via Vector / LSPosed or dial *#*#224#*#*</string>
     <string name="toast_icon_shown">Icon restored to launcher</string>
     <string name="toast_error_fmt">Error: %1$s</string>
     <string name="pref_language_title">App Language</string>
@@ -187,8 +187,9 @@
     <string name="soft_reboot_dialog_desc">The screen will briefly turn off for ~5 seconds and open apps will close. Kernel and data remain untouched.</string>
     <string name="tools_soft_reboot_failed">Soft Reboot failed: %1$s</string>
     <string name="tools_manager_title">Vector / LSPosed Manager</string>
-    <string name="tools_manager_desc">Open framework manager to verify module activation and System scope</string>
+    <string name="tools_manager_desc">Open framework manager (including hidden/parasitic Bugreport shortcut) to verify module scope</string>
     <string name="tools_manager_open_btn">Open</string>
+    <string name="tools_manager_launch_failed">Manager not found. Dial *#*#832867#*#* (Vector) or *#*#5776733#*#* (LSPosed), or grant Root</string>
     <string name="device_compatibility">Device Compatibility</string>
     <string name="compat_status_ok">Compatible • %1$s</string>
     <string name="compat_status_old_sdk">Android 12+ required (current SDK %1$d)</string>
@@ -218,8 +219,8 @@
 
     <!-- FAQ & Changelog Tab -->
     <string name="faq_title">FAQ &amp; Changelog</string>
-    <string name="faq_q0">What is new in version 1.5.0?</string>
-    <string name="faq_a0">1. Clean 7/7 Verified Hook Engine: removed 3 uncalled ColorOS 17 hooks (getAccelerateScale, isReduceDisabled, getLargeChangeLimit) verified as zero-hit over 24h runtime telemetry, numbered all settings toggles (#1–#7), and added a complete 7-hook reference card right below.\n2. Vector Framework &amp; LibXposed API 102 priority: native XposedService + RemotePreferences sync allows instant zero-root settings updates while preserving full SystemProperties fallback for legacy LSPosed forks.\n3. Persistent ring log &amp; accurate statistics: GUARD_STATS telemetry + persistent disk log (/data/system/autobrightness_guard.log), burst-coalesced counters, 10 lx Aux deadband filtering, ColorOS 17 calibration, and unified OLED/Light M3 UI.</string>
+    <string name="faq_q0">What is new in version 1.5.1?</string>
+    <string name="faq_a0">1. Hook #7 Call-Proximity Fix: narrowed high_pwm_rgb detection to strictly ignore TYPE_PROXIMITY (tcs3720 Proximity Sensor Wakeup) and Wise_RGB so disabling the 3rd under-display sensor eliminates dim-room white-content glare without breaking ear proximity during calls, and expanded handle caching to 4096 entries (covering 0x06a5).\n2. Hidden/Parasitic Manager Launcher: Tools → Open now detects and launches hidden Vector / LSPosed via com.android.shell/.BugreportWarningActivity (LAUNCH_MANAGER) plus *#*#832867#*#* / *#*#5776733#*#* fallbacks.\n3. Safe App Icon Hiding &amp; Localized Changelog: hiding our icon now disables only the launcher alias, keeping access open from Vector / LSPosed Manager and dialer code *#*#224#*#*, and full version history is localized across EN / RU / UK.</string>
     <string name="faq_q1">What is the OxygenOS / ColorOS auto-brightness bug?</string>
     <string name="faq_a1">On OnePlus / OPPO devices (OxygenOS / ColorOS 12–17), OplusAutomaticBrightnessController schedules an AlarmManager timer (usually 10 minutes) when the screen turns off. When triggered, resetAutoBrightness() (or resetAutoBrightness(1) with DragOpt on ColorOS 17) and OplusBrightnessAmbientAdapter.resetAmbientAdapter("AutoReset") erase your learned brightness curve.</string>
     <string name="faq_q2">How do Vector Framework and KSUN + SUSFS work together?</string>
@@ -247,13 +248,25 @@
     <string name="hook_guide_5_desc">Filters indoor rear light sensor spikes when auxLux exceeds mainLux by &gt;10 lx and &gt;1.15x (blending 60% toward auxLux + 0.35 EMA smoothing below 200 lx; unfiltered above 200 lx outdoors). Also executes MAIN and AUX sensor disable toggles from Overview. Controlled in Settings [Hook #5] &amp; Overview.</string>
     <string name="hook_guide_6_title">Live Custom 7-Point Curve Override</string>
     <string name="hook_guide_6_method">OplusDisplayBrightnessModel.getValueByCurve(String, float)</string>
-    <string name="hook_guide_6_desc">Samples the device\'s real stock ROM spline (STOCK_CURVE) and, when Custom Curve is enabled, substitutes your 7-point log-lux to nit curve (0–10,000 lx) in real time without reboot; above 10,000 lx yields to stock HBM/sunlight peak if higher. Controlled on Overview → Curve Editor.</string>
+    <string name="hook_guide_6_desc">Samples the device\'s real stock ROM spline (STOCK_CURVE), and, when Custom Curve is enabled, substitutes your 7-point log-lux to nit curve (0–10,000 lx) in real time without reboot; above 10,000 lx yields to stock HBM/sunlight peak if higher. Controlled on Overview → Curve Editor.</string>
     <string name="hook_guide_7_title">Under-Display PWM Sensor Switch</string>
     <string name="hook_guide_7_method">android.hardware.SystemSensorManager$SensorEventQueue.dispatchSensorEvent</string>
-    <string name="hook_guide_7_desc">Caches high_pwm_rgb (tcs3720) sensor handles inside system_server with zero allocation and drops its event stream when toggled OFF on Overview, stopping high-frequency under-display PWM readings when undesired. Controlled on Overview → Brightness &amp; Sensors [PWM • #7].</string>
+    <string name="hook_guide_7_desc">Caches strictly high_pwm_rgb handles (up to 4096, never touching tcs3720 Proximity or Wise_RGB) inside system_server with zero allocation and drops its event stream when toggled OFF on Overview, stopping dark-room bright-content glare spikes without affecting call proximity. Controlled on Overview → Brightness &amp; Sensors [PWM • #7].</string>
     <string name="changelog_title">Version History (Changelog)</string>
     <string name="changelog_hide">Hide version history</string>
-    <string name="changelog_show">Tap to expand (1.1 – 1.5.0)</string>
+    <string name="changelog_show">Tap to expand (1.1 – 1.5.1)</string>
+    <string name="changelog_v151_title">v1.5.1 (Hook #7 Proximity Fix, Hidden Manager &amp; Dialer Entry)</string>
+    <string name="changelog_v151_body">• Hook #7 Call-Proximity Fix: filtered out TYPE_PROXIMITY (tcs3720 Proximity Sensor Wakeup) and Wise_RGB, expanded handle cache to 4096 (covering 0x06a5) — stops dim-room bright-content brightness spikes safely.\n• Hidden/Parasitic Manager Launch: Tools → Open supports BugreportWarningActivity (Vector/LSPosed LAUNCH_MANAGER) + secret code fallbacks.\n• Safe App Icon Hiding: separated launcher alias from MainActivity (added MODULE_SETTINGS &amp; dialer code *#*#224#*#* + automatic migration from 1.5.0).\n• Localized Changelog: full Version History now adapts to English, Russian, and Ukrainian.</string>
+    <string name="changelog_v150_title">v1.5.0 (Vector Framework, 7-Hook Engine &amp; Stats)</string>
+    <string name="changelog_v150_body">• Vector Framework (LibXposed API 102) &amp; RemotePreferences: Zero-Root live sync + scope check, preserving SystemProperties fallback for legacy LSPosed forks.\n• Clean 7/7 Verified Hook Engine: removed 3 uncalled ColorOS 17 hooks after 24h telemetry, numbered toggles (#1–#7), and added a 7-hook reference guide.\n• Persistent disk log (/data/system/autobrightness_guard.log), GUARD_STATS (hook_mask=1111111), burst-coalesced counters, ColorOS 17 calibration (6..4095 + HBM).</string>
+    <string name="changelog_v145_title">v1.4.5 (Universal Root, ColorOS 17 HBM &amp; Auto-Installer)</string>
+    <string name="changelog_v145_body">• Universal su detection (Magisk, KernelSU, KSUN, BakaSU, APatch) + Vector/LSPosed log path support.\n• ColorOS 17 BrightnessModel calibration (6..4095, mNormalMaxNit, HBM up to 2000 nits) &amp; in-app APK updater with progress bar.\n• 3-mode Night Floor selector (Off / Auto 8.5 / Custom 1–150 nits).</string>
+    <string name="changelog_v144_title">v1.4.4 (PWM Sensor Switch &amp; Live Nits)</string>
+    <string name="changelog_v144_body">• Disableable under-display PWM sensor (high_pwm_rgb).\n• Hardware spline nit calibration synced across Sensors &amp; Curve Editor.</string>
+    <string name="changelog_v140_title">v1.4.0 – 1.4.3 (Multi-Hook Engine &amp; Curve Profiles)</string>
+    <string name="changelog_v140_body">• DragOpt resetAutoBrightness(int), Anti-Drift, 8.5 nit Night Floor, DarkEnv Skip, 360° Aux Smoother, 7-point Live Curve with JSON profiles.</string>
+    <string name="changelog_v110_title">v1.1 – 1.3b (Foundation &amp; SystemProperties IPC)</string>
+    <string name="changelog_v110_body">• Dual-rule Reset Guard, ambient adapter hook, live SystemProperties sync, multi-language UI, GitHub update checker.</string>
     <string name="about_title">About &amp; Source</string>
     <string name="about_body_fmt">Author: Banoku\nVersion: %1$s\nAPI: LibXposed 102 (Vector &amp; LSPosed)</string>
     <string name="open_github_desc">Open GitHub repository</string>

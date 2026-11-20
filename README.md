@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.5.0-blue.svg" alt="Release" /></a>
+  <a href="https://github.com/utaocheshir/AutoBrightnessGuard/releases"><img src="https://img.shields.io/badge/Release-v1.5.1-blue.svg" alt="Release" /></a>
   <a href="https://github.com/libxposed"><img src="https://img.shields.io/badge/LibXposed-API%20102-orange.svg" alt="LibXposed API 102" /></a>
   <a href="https://github.com/utaocheshir/AutoBrightnessGuard"><img src="https://img.shields.io/badge/Target-OnePlus%20%7C%20OxygenOS%20%7C%20ColorOS-green.svg" alt="Platform" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg" alt="License" /></a>
@@ -37,15 +37,15 @@ In OxygenOS and ColorOS 12–17:
 4. **Hook #4 — Night Floor & DarkEnv Guard (`4a + 4b`):** Skips hidden 20-min dark-room dimming (`OplusFeatureDarkEnvReduceBrightness`) and enforces either Auto `8.5 nits` or an unconditional `1–150 nits` custom floor (`convertNitToBrightness`).
 5. **Hook #5 — Dual 360° Aux Sensor Smoother:** Smooths significant indoor rear-sensor spikes (`>10 lx` & `>1.15x`) in `LuxEventResult.calculateAuxLux()` (60% blend + 0.35 EMA), plus handles `MAIN` / `AUX` sensor kill-switches.
 6. **Hook #6 — Live Custom 7-Point Curve:** Substitutes your custom lux→nit curve (`0–10,000 lx`) in `OplusDisplayBrightnessModel.getValueByCurve("", lux)` and samples the stock ROM spline (`STOCK_CURVE`).
-7. **Hook #7 — Under-Display PWM Sensor Switch:** Drops `high_pwm_rgb` (`tcs3720`) event streams in `SystemSensorManager$SensorEventQueue` when disabled on Overview.
+7. **Hook #7 — Under-Display PWM Sensor Switch:** Strictly filters and drops `qti.sensor.high_pwm_rgb` event streams in `SystemSensorManager$SensorEventQueue` (explicitly excluding `tcs3720 Proximity` & `Wise_RGB`, caching handles up to 4096) to stop dim-room bright-content glare spikes without affecting calls.
 - **Zero-Root Vector IPC + SystemProperties Fallback:** Native **Vector Framework (LibXposed API 102)** `RemotePreferences` syncs settings instantly without `su`, while keeping `persist.autobrightness.*` fallback for legacy LSPosed forks.
 - **Fail-Open & Persistent Stats:** Forces ART deoptimization on hooked methods, emits burst-coalesced `GUARD_STATS` to `/data/system/autobrightness_guard.log`, and falls back safely on any error.
 
 ### ✨ Companion App Features
-- **Overview (v1.5.0):** Unified Module Status & Protection Statistics card (`7/7` hook verification + live counters), toggleable `MAIN`, `AUX` (`tcs3449`), and `PWM • #7` (`tcs3720`) sensors, exact 12-bit ColorOS 17 nit readout (`%` & `nits`), and custom 7-point curve editor with `.json` profiles.
-- **Settings:** Numbered controls (`[Hook #1]`..`[Hook #5]`, `[Hooks #1–2]`) with OS compatibility badges and instant live apply banner.
-- **Live Logs & Tools:** Root log reader with chronological merge (Vector + disk log + logcat), universal `su` support (Magisk/KSUN/APatch), Quick Soft Reboot (`killall system_server`), in-app APK updater, and collapsible diagnostic commands.
-- **FAQ:** Detailed **7-Hook Reference Guide** explaining every hook and its target method, plus collapsible Changelog.
+- **Overview (v1.5.1):** Unified Module Status & Protection Statistics card (`7/7` hook verification + live counters), toggleable `MAIN`, `AUX`, and `PWM • #7` (`high_pwm_rgb`) sensors, exact 12-bit ColorOS 17 nit readout (`%` & `nits`), and custom 7-point curve editor with `.json` profiles.
+- **Settings & Stealth Entry:** Numbered controls (`[Hook #1]`..`[Hook #5]`, `[Hooks #1–2]`), safe launcher-icon hiding via `<activity-alias>` (`MODULE_SETTINGS` in Vector/LSPosed + dialer secret code `*#*#224#*#*`).
+- **Live Logs & Tools:** Root log reader with chronological merge (Vector + disk log + logcat), hidden/parasitic Vector & LSPosed Manager launcher (`BugreportWarningActivity` + `LAUNCH_MANAGER`), Quick Soft Reboot (`killall system_server`), in-app APK updater, and collapsible diagnostic commands.
+- **FAQ:** Detailed **7-Hook Reference Guide** explaining every hook and its target method, plus fully localized Changelog (EN / RU / UK).
 
 ### 🚀 Installation
 1. Download the latest APK from the [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases) page.
@@ -87,15 +87,15 @@ Expected output upon successful block:
 4. **Хук #4 — Ночной минимум и DarkEnv Guard (`4a + 4b`):** отключает 20-минутное затемнение в темноте (`OplusFeatureDarkEnvReduceBrightness`) и удерживает Авто-порог `8.5 нит` или ручной безусловный пол `1–150 нит` (`convertNitToBrightness`).
 5. **Хук #5 — Балансировщик 360° Aux-датчика:** сглаживает скачки тылового датчика в помещении (`>10 lx` и `>1.15x`) в `calculateAuxLux()` (60% смешивание + EMA 0.35), а также отвечает за выключатели `MAIN`/`AUX`.
 6. **Хук #6 — Живая пользовательская кривая:** подменяет кривую в `OplusDisplayBrightnessModel.getValueByCurve("", lux)` по 7 точкам (`0–10 000 lx`) и считывает реальную штатную кривую `STOCK_CURVE`.
-7. **Хук #7 — Выключатель подэкранного PWM-датчика:** отсекает события `high_pwm_rgb` (`tcs3720`) в `SystemSensorManager$SensorEventQueue` при отключении на главном экране.
+7. **Хук #7 — Выключатель подэкранного PWM-датчика:** точечно отсекает поток `qti.sensor.high_pwm_rgb` в `SystemSensorManager$SensorEventQueue` (полностью исключая `tcs3720 Proximity` и `Wise_RGB`, с кэшем хэндлов до 4096), убирая всплески яркости на белом контенте в темноте без влияния на датчик приближения при звонке.
 - **Zero-Root Vector IPC и SystemProperties:** нативный **Vector Framework (LibXposed API 102)** синхронизирует настройки мгновенно без `su` через `RemotePreferences`, с полным резервом через `persist.autobrightness.*` для LSPosed.
 - **Деоптимизация ART и постоянный журнал:** все 7 хуков защищены от инлайнинга, работают отказоустойчиво и сохраняют статистику `GUARD_STATS` в `/data/system/autobrightness_guard.log`.
 
 ### ✨ Возможности приложения-компаньона
-- **Обзор (v1.5.0):** объединённая карточка статуса (`7/7` хуков) и статистики защиты, раздельное отключение `MAIN`, `AUX` и `PWM • #7`, точный вывод яркости (`%` и `нит` с поддержкой шкалы `6..4095` и HBM в ColorOS 17), а также 7-точечный редактор профилей кривой (`.json`).
-- **Настройки:** пронумерованные переключатели (`[Хук #1]`..`[Хук #5]`, `[Хуки #1–2]`) с бейджами совместимости версий ОС и мгновенным применением.
-- **Логи и Инструменты:** склейка журналов Vector + дискового лога + logcat, универсальная поддержка Root (Magisk/KSUN/BakaSU/APatch), кнопка **Soft Reboot**, встроенный установщик обновлений APK и сворачиваемые команды терминала.
-- **Справка:** подробный **справочник всех 7 хуков** с описанием методов и сворачиваемая история версий.
+- **Обзор (v1.5.1):** объединённая карточка статуса (`7/7` хуков) и статистики защиты, раздельное отключение `MAIN`, `AUX` и `PWM • #7`, точный вывод яркости (`%` и `нит` с поддержкой шкалы `6..4095` и HBM в ColorOS 17), а также 7-точечный редактор профилей кривой (`.json`).
+- **Настройки и скрытый доступ:** пронумерованные переключатели (`[Хук #1]`..`[Хук #5]`, `[Хуки #1–2]`), безопасное скрытие иконки через `<activity-alias>` (открытие из Vector/LSPosed `MODULE_SETTINGS` и по коду **`*#*#224#*#*`** в звонилке).
+- **Логи и Инструменты:** склейка журналов Vector + дискового лога + logcat, запуск скрытого/паразитического Vector и LSPosed Manager (`BugreportWarningActivity` + `LAUNCH_MANAGER`), кнопка **Soft Reboot**, встроенный автоустановщик обновлений APK и сворачиваемые команды терминала.
+- **Справка:** подробный **справочник всех 7 хуков** с описанием методов и полностью переведённая история версий (RU / EN / UK).
 
 ### 🚀 Установка
 1. Скачайте APK со страницы [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases).
@@ -140,13 +140,13 @@ su -c "logcat -d -s AutoBrightnessGuard"
 4. **Хук #4 — Нічний мінімум і DarkEnv Guard (`4a + 4b`):** вимикає 20-хвилинне затемнення в темряві та утримує Авто `8.5 ніт` або безумовний поріг `1–150 ніт` (`convertNitToBrightness`).
 5. **Хук #5 — Балансувальник 360° Aux-датчика:** згладжує стрибки тилового датчика в приміщенні (`>10 lx` і `>1.15x`) у `calculateAuxLux()`, а також обслуговує вимикачі `MAIN`/`AUX`.
 6. **Хук #6 — Жива користувацька крива:** підмінює криву в `OplusDisplayBrightnessModel.getValueByCurve("", lux)` за 7 точками (`0–10 000 lx`) і зчитує штатну `STOCK_CURVE`.
-7. **Хук #7 — Вимикач підекранного PWM-датчика:** відсікає потік подій `high_pwm_rgb` (`tcs3720`) у `SystemSensorManager$SensorEventQueue`.
+7. **Хук #7 — Вимикач підекранного PWM-датчика:** точково відсікає потік `qti.sensor.high_pwm_rgb` у `SystemSensorManager$SensorEventQueue` (не зачіпаючи `tcs3720 Proximity` та `Wise_RGB`, з кешем хендлів до 4096) — без шкоди для датчика наближення під час дзвінка.
 - **Zero-Root Vector IPC і SystemProperties:** нативний **Vector Framework (LibXposed API 102)** синхронізує налаштування миттєво без `su` через `RemotePreferences` із резервом `persist.autobrightness.*` для LSPosed.
 
 ### ✨ Можливості додатка-компаньйона
-- **Огляд (v1.5.0):** об'єднана картка статусу (`7/7` хуків) і статистики, вимикачі датчиків `MAIN`, `AUX`, `PWM • #7`, точний вивід яскравості (`%` і `ніт`) та 7-точковий редактор профілів кривої (`.json`).
-- **Налаштування:** пронумеровані перемикачі (`[Хук #1]`..`[Хук #5]`, `[Хуки #1–2]`) із миттєвим застосуванням на льоту.
-- **Логи, Інструменти і Довідка:** журнал із дисковим кільцевим буфером `/data/system/autobrightness_guard.log`, Soft Reboot, автооновлення APK, та детальний **довідник усіх 7 хуків** у Довідці.
+- **Огляд (v1.5.1):** об'єднана картка статусу (`7/7` хуків) і статистики, вимикачі датчиків `MAIN`, `AUX`, `PWM • #7`, точний вивід яскравості (`%` і `ніт`) та 7-точковий редактор профілів кривої (`.json`).
+- **Налаштування та прихований доступ:** пронумеровані перемикачі (`[Хук #1]`..`[Хук #5]`, `[Хуки #1–2]`), безпечне приховування ярлика (`MODULE_SETTINGS` + код **`*#*#224#*#*`** у дзвонилці).
+- **Логи, Інструменти і Довідка:** журнал із дисковим буфером `/data/system/autobrightness_guard.log`, запуск прихованого Vector/LSPosed (`BugreportWarningActivity`), Soft Reboot, автооновлення APK, довідник усіх 7 хуків та локалізована історія версій (UK / RU / EN).
 
 ### 🚀 Встановлення
 1. Завантажте останній APK зі сторінки [Releases](https://github.com/utaocheshir/AutoBrightnessGuard/releases).
